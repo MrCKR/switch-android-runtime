@@ -1,0 +1,28 @@
+android {
+    namespace 'org.mrckr.switchruntime'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'org.mrckr.switchruntime'
+        minSdk 29
+        targetSdk 35
+        versionCode 1
+        versionName '0.1.0-dev'
+        externalNativeBuild { cmake { cppFlags '-std=c++20' } }
+    }
+
+    buildTypes {
+        debug { debuggable true; minifyEnabled false }
+        release { minifyEnabled false }
+    }
+
+    externalNativeBuild {
+        cmake { path file('src/main/cpp/CMakeLists.txt'); version '3.30.5' }
+    }
+
+    packaging { jniLibs { useLegacyPackaging true } }
+}
+
+buildscript {
+    repositories { google(); mavenCentral() }
+}
