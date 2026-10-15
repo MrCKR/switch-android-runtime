@@ -1,7 +1,8 @@
+#include <jni.h>
 #include <android/log.h>
 #include <android/native_window_jni.h>
 #include <vulkan/vulkan.h>
-#include <mutex>
+#include <chrono>
 #include <thread>
 #include <vector>
 #include <string>
