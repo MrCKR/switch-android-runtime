@@ -21,9 +21,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - uses: android-actions/setup-android@v3
-      - name: Install Android SDK packages
-        run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "cmake;3.30.5" "ndk;27.2.12479018"
+      - name: Prepare Android SDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "cmake;3.30.5" "ndk;27.2.12479018"
       - name: Build debug APK
         run: gradle assembleDebug
       - uses: actions/upload-artifact@v4
