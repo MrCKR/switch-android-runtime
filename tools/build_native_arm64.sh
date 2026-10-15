@@ -22,3 +22,10 @@ clang++ \
   -rtlib=compiler-rt -unwindlib=none \
   -lc++_shared -landroid -llog -lvulkan \
   -o "$OUT/libswitch_runtime.so"
+
+# Package the shared C++ runtime next to the library so the APK is self-contained.
+for cxx in "$SYS/usr/lib/aarch64-linux-android/libc++_shared.so" \
+           "$SYS/usr/lib/aarch64-linux-android/libc++_shared.so"; do
+  [ -f "$cxx" ] && cp -f "$cxx" "$OUT/" && break
+done
+ls -l "$OUT"
