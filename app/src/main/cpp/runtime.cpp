@@ -19,6 +19,8 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
+extern "C" int dm_compat_self_test(char* error, size_t error_size);
+
 namespace {
 
 std::mutex g_mutex;
@@ -554,6 +556,12 @@ Java_org_mrckr_switchruntime_MainActivity_nativeSetReportDir(JNIEnv* env, jobjec
         std::string path = g_report_dir + "/vulkan_report.txt";
         g_report = fopen(path.c_str(), "w");
         report("=== Switch Android Runtime capability report ===");
+        char compat_error[256] = {};
+        if (dm_compat_self_test(compat_error, sizeof(compat_error))) {
+            report("compat self-test: PASS");
+        } else {
+            report("compat self-test: FAIL: %s", compat_error);
+        }
     }
 }
 
