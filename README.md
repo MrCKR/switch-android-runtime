@@ -1,85 +1,147 @@
 # Switch Android Runtime
 
-Android ARM64 runtime and compatibility framework for running **your own** legally
-dumped Switch game files natively. Not an emulator: it loads the game's own
-AArch64 code and provides the Switch system services, graphics API translation
-and Android platform layer around it.
+面向 Android ARM64 的 Switch 游戏原生兼容运行时与游戏适配框架。
 
-Status: **Phase 2 — Vulkan bring-up verified on real hardware.**
+> 项目定位：为特定 Switch 游戏提供可复用的 Android 运行时能力，再由独立的 Game Adapter 实现具体游戏。
+>
+> 当前状态：**架构验证阶段，尚未实现可运行的 Android 构建**。
 
-```
-instance created apiVersion=1.1
-device name=Adreno (TM) 730 api=1.1.128
-swapchain 2520x1080, 5-6 images, FIFO/MAILBOX present modes
-presented 2760 frames, ~55 fps steady
-```
+## 目标
 
-## What this repository is
+本项目不是从第一天就承诺成为完整的通用 Switch 模拟器，而是建立一个可扩展的运行时：
 
-Two layers live here, and they are deliberately separated:
-
-| Layer | Responsibility | Must not contain |
-|---|---|---|
-| Runtime (this repo) | ARM64 module loading, memory/thread primitives, HLE services, NVN→Vulkan translation, input, audio, Android platform glue, diagnostics | Anything specific to one game |
-| Game adapter (separate repo) | Binary offsets, patches, symbol maps, shader manifests, resource paths, save handling, touch UI | Framework logic that other games need |
-
-The first adapter is [d2r-android-adapter](https://github.com/MrCKR/d2r-android-adapter).
-
-## ABI policy
-
-The framework does not restrict ABI. Interfaces and directory layout allow
-adding `arm64-v8a`, `armeabi-v7a`, `x86` or `x86_64`; which ABIs a given build
-contains is decided only by which native libraries that build produces. The
-current test device is ARM64, so the initial phase generates `arm64-v8a` only.
-That is a build artifact, not a framework limit.
-
-## Roadmap
-
-| Phase | Goal | State |
-|---|---|---|
-| 0 | Repo, architecture, data boundaries | done |
-| 1 | Android app shells out to native, Vulkan instance + capability probe | done |
-| 2 | Device, swapchain, render pass, clear + present loop | done |
-| 3 | Shader toolchain: SPIR-V ingestion, pipeline cache, first triangle from translated code | next |
-| 4 | ARM64 module loader: NSO parse, relocation, memory mapping | planned |
-| 5 | HLE skeleton: threads, sync, time, filesystem, logging | planned |
-| 6 | NVN API surface: objects, commands, descriptor model | planned |
-| 7 | D2R adapter hookup: version ID, patches, first playable frame | planned |
-| 8 | Touch input, audio, save, performance work | planned |
-
-## Building
-
-The build host in use is an ARM64 Linux environment, which needs one shim: the
-Android SDK's AAPT2 ships as an x86_64 binary only. It is a packaging tool, so it
-runs under QEMU while all target code is compiled natively.
-
-```
-tools/setup_host_arm64.sh          # once: SDK, NDK, host tools, AAPT2 shim
-ANDROID_SDK_ROOT=<sdk> tools/build_arm64.sh
+```text
+Android App
+    └── Platform Layer
+        └── Runtime Core
+            ├── ARM64 module loader
+            ├── Switch service/HLE layer
+            ├── virtual filesystem
+            ├── thread/synchronization/time
+            ├── input/audio
+            └── graphics API layer
+                └── Vulkan backend
+                    └── Game Adapter
 ```
 
-`tools/build_native_arm64.sh` compiles `app/src/main/cpp/*.cpp` with the host's
-native clang, targeting `aarch64-linux-android`, and stages the result plus
-`libc++_shared.so` in `app/src/main/jniLibs/`. Gradle then only does Java,
-resources, packaging and signing.
+第一项验证目标是：配合 [`d2r-android-adapter`](https://github.com/MrCKR/d2r-android-adapter)，在真实 Android 手机上启动并运行 Diablo II: Resurrected 的 Switch 版本。
 
-On an x86_64 host none of that is needed: standard Gradle + NDK works directly.
+## ABI 策略
 
-## Diagnostics
+框架本身不限制 ABI。Runtime 的接口和目录布局允许后续加入 `arm64-v8a`、`armeabi-v7a`、`x86` 或 `x86_64`；某次构建包含哪些 ABI，只由该次构建实际生成并提供的 Native 库决定。当前开发手机是 ARM64，因此第一阶段只生成 `arm64-v8a` 测试库，这不是产品或框架级限制。
 
-Launching the app writes a full Vulkan capability report to
-`Android/data/org.mrckr.switchruntime/files/diagnostics/vulkan_report.txt`
-(limits, features, memory heaps, queue families, and the extension subset the
-NVN translation layer depends on), while the same lines go to logcat under the
-`SwitchRuntime` tag.
+## 与传统模拟器的区别
 
-## Data boundaries
+- 不以模拟完整 Switch 硬件为第一目标；
+- 优先利用 Switch 与 Android 手机共有的 ARM64 指令集，直接运行目标游戏代码；
+- 只实现目标游戏实际使用的 Switch 服务；
+- 将 Switch NVN 图形调用映射到 Android Vulkan；
+- 具体游戏的地址、补丁、Shader 清单和特殊行为放在 Adapter 仓库，而不是写死在核心运行时。
 
-This repository contains no game code, no game assets, no shaders extracted from
-a game, no encryption keys and no dumped files. It only loads files the user
-supplies from their own device. The MIT license covers this project's own code
-and grants no rights to any game or platform content.
+这是一个**游戏专用兼容层框架**，不是现成的 Switch 通用模拟器。
 
-## License
+## 仓库边界
 
-MIT
+### 本仓库负责
+
+- Android NDK/CMake 工程和 APK 外壳；
+- ARM64 模块加载、映射、重定位和生命周期；
+- 通用线程、同步、时间、内存和异常基础设施；
+- Switch 文件系统和服务兼容接口；
+- NVN 抽象层及 Vulkan 后端；
+- Shader 转换、反射和 Vulkan pipeline cache；
+- Android 输入、触屏、手柄、音频和文件导入；
+- 日志、诊断、设备能力探测和测试工具；
+- 稳定的 Game Adapter SDK/API。
+
+### Game Adapter 负责
+
+- 支持的游戏版本与指纹；
+- 游戏模块地址、符号和重定位信息；
+- 游戏专用二进制补丁；
+- 特殊系统服务覆盖；
+- Shader/纹理/资源清单；
+- 存档、输入映射和游戏专用 UI；
+- 版本兼容性与已知问题。
+
+## 计划
+
+### Phase 0：架构和设备基线
+
+- [x] 建立独立 Runtime 和 D2R Adapter 仓库；
+- [ ] 固定 Adapter SDK 边界；
+- [ ] 记录目标手机的 SoC、GPU、Vulkan 和内存能力；
+- [ ] 建立最小 CI：格式检查、CMake 配置、单元测试。
+
+### Phase 1：Android 最小运行骨架
+
+- [ ] Gradle + Android NDK + CMake 工程；
+- [ ] NativeActivity/Activity + Surface 生命周期；
+- [ ] Vulkan instance/device/swapchain；
+- [ ] 黑屏清屏 Demo 和 GPU 能力报告；
+- [ ] Android 日志、崩溃转储和可导出的诊断包。
+
+### Phase 2：通用 Runtime
+
+- [ ] ARM64 模块格式解析；
+- [ ] 模块加载、映射和重定位；
+- [ ] 内存区域模型；
+- [ ] 线程、TLS、锁、事件和计时器；
+- [ ] 虚拟文件系统和只读游戏资源挂载；
+- [ ] 最小 Switch 服务/HLE 接口。
+
+### Phase 3：图形和媒体
+
+- [ ] NVN 对象和命令抽象；
+- [ ] Buffer、Texture、Sampler、Framebuffer；
+- [ ] Shader → SPIR-V/Vulkan pipeline 流程；
+- [ ] 同步、呈现和 pipeline cache；
+- [ ] 音频输出和手柄输入。
+
+### Phase 4：D2R 验证
+
+- [ ] 接入 `d2r-android-adapter`；
+- [ ] 游戏文件指纹校验和用户导入流程；
+- [ ] 启动器和资源目录映射；
+- [ ] 启动到主菜单；
+- [ ] 创建角色并进入离线游戏；
+- [ ] 输入、声音、存档和恢复；
+- [ ] 在目标 vivo 手机上持续运行和性能记录。
+
+### Phase 5：抽象验证
+
+- [ ] 将 D2R 专用逻辑全部移出 Runtime；
+- [ ] 为第二个实验游戏建立最小 Adapter；
+- [ ] 记录哪些接口真正通用，哪些必须保留为游戏扩展；
+- [ ] 冻结 v0.1 Adapter SDK。
+
+## 目标设备
+
+第一验证设备来自当前开发环境：
+
+- vivo V2256A / PD2256；
+- Android 16，SDK 36；
+- ARM64（`arm64-v8a`）；
+- Qualcomm `taro` 平台；
+- 具体 GPU/Vulkan 能力需要由 Phase 1 工具实际读取，不能仅凭 SoC 名称推断。
+
+## 合法性和数据边界
+
+本项目不分发 Nintendo、Blizzard 或其他第三方的游戏程序、资源、密钥、Shader、存档或受版权保护的数据。用户必须自行从合法拥有的游戏副本导出文件。
+
+任何提交都不得包含：
+
+- 游戏 ROM/NSP/XCI；
+- `prod.keys` 或其他密钥；
+- 游戏二进制、资源和存档；
+- API Token、签名证书和私钥；
+- 从游戏内容直接提取的可再分发文件。
+
+## 许可证
+
+框架代码暂采用 MIT License。具体第三方依赖遵循各自许可证。
+
+## 相关项目
+
+- [D2R Android Adapter](https://github.com/MrCKR/d2r-android-adapter)
+- [上游 d2r-mobile](https://github.com/jhaizhou-ops/d2r-mobile)
