@@ -12,11 +12,12 @@ mkdir -p "$OUT" "$OBJ" "$ROOT/build/host-libs"
 
 TGT="--target=aarch64-linux-android29 --sysroot=$SYS -resource-dir=$PRE/lib/clang/18"
 COMPAT="$ROOT/runtime/compat"
-CFLAGS="$TGT -fPIC -std=c11 -fno-stack-protector -fblocks -I$COMPAT/darwin -I$COMPAT -include $COMPAT/darwin/platform_compat.h"
+TLS="$ROOT/runtime/tls"
+CFLAGS="$TGT -fPIC -std=c11 -fno-stack-protector -fblocks -I$COMPAT/darwin -I$COMPAT -I$TLS -include $COMPAT/darwin/platform_compat.h"
 
 # Compile the C compatibility layer as C, not as C++, so the upstream-facing
 # ABI remains exactly the one validated by compile_upstream_modules.sh.
-for src in "$COMPAT"/dm_compat_*.c; do
+for src in "$COMPAT"/dm_compat_*.c "$TLS"/android_tls.c "$TLS"/android_tls_thunk.c; do
   name=$(basename "$src" .c)
   # shellcheck disable=SC2086
   clang $CFLAGS -c "$src" -o "$OBJ/$name.o"

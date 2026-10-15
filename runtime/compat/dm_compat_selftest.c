@@ -12,6 +12,8 @@
 #include <stdio.h>
 #include <string.h>
 
+int dm_android_tls_self_test(void);
+
 static void hex(const uint8_t *in, size_t n, char *out) {
     static const char digits[] = "0123456789abcdef";
     for (size_t i = 0; i < n; ++i) {
@@ -63,6 +65,15 @@ int dm_compat_self_test(char *error, size_t error_size) {
         return 0;
     }
 
+    if (!dm_android_tls_self_test()) {
+        snprintf(error, error_size, "Android TLS bridge self-test failed");
+        return 0;
+    }
+
     if (error_size) error[0] = '\0';
     return 1;
 }
+
+/* Android guest TLS bridge is deliberately checked separately from the legacy
+ * Darwin compatibility checks, so a failure identifies the new bridge. */
+int dm_android_tls_self_test(void);
