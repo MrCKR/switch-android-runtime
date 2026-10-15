@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(RUNTIME_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../../")
 set(COMPAT_ROOT "${RUNTIME_ROOT}/runtime/compat")
 set(COMPAT_DARWIN "${COMPAT_ROOT}/darwin")
+set(TLS_ROOT "${RUNTIME_ROOT}/runtime/tls")
 
 set(COMPAT_SOURCES
     "${COMPAT_ROOT}/dm_compat_audio.c"
@@ -18,6 +19,8 @@ set(COMPAT_SOURCES
     "${COMPAT_ROOT}/dm_compat_sha256.c"
     "${COMPAT_ROOT}/dm_compat_selftest.c"
     "${COMPAT_ROOT}/dm_compat_xattr.c"
+    "${TLS_ROOT}/android_tls.c"
+    "${TLS_ROOT}/android_tls_thunk.c"
 )
 
 add_library(switch_runtime SHARED
@@ -28,6 +31,7 @@ add_library(switch_runtime SHARED
 target_include_directories(switch_runtime PRIVATE
     "${COMPAT_DARWIN}"
     "${COMPAT_ROOT}"
+    "${TLS_ROOT}"
 )
 
 target_compile_options(switch_runtime PRIVATE
