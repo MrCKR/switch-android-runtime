@@ -26,6 +26,7 @@ set(COMPAT_SOURCES
 add_library(switch_runtime SHARED
     runtime.cpp
     ${COMPAT_SOURCES}
+    "${TLS_ROOT}/tls_trampoline.S"
 )
 
 target_include_directories(switch_runtime PRIVATE
