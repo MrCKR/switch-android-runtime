@@ -26,7 +26,10 @@ Android App
 
 第一项验证目标是：配合 [`d2r-android-adapter`](https://github.com/MrCKR/d2r-android-adapter)，在真实 Android 手机上启动并运行 Diablo II: Resurrected 的 Switch 版本。
 
-## 与传统模拟器的区别
+## ABI 策略
+
+框架本身不限制 ABI。Runtime 的接口和目录布局允许后续加入 `arm64-v8a`、`armeabi-v7a`、`x86` 或 `x86_64`；某次构建包含哪些 ABI，只由该次构建实际生成并提供的 Native 库决定。当前开发手机是 ARM64，因此第一阶段只生成 `arm64-v8a` 测试库，这不是产品或框架级限制。
+
 
 - 不以模拟完整 Switch 硬件为第一目标；
 - 优先利用 Switch 与 Android 手机共有的 ARM64 指令集，直接运行目标游戏代码；
