@@ -126,6 +126,24 @@ These symbols are present in the APK's `libswitch_runtime.so`
 (`dm_android_tls_thunk_get` / `dm_android_tls_thunk_set`), so a rewritten guest
 image can call them directly once the rewriter binds call sites to them.
 
+### Superseded measurement
+
+An earlier note in this file said `tpidr_el0` write was unusable because a
+device probe had failed. That probe never ran (its build failed and a 404 page
+was executed instead), so the claim was unfounded. A corrected on-device
+measurement gives:
+
+```text
+read:  tpidr_el0=0x7708d23000   tpidrro_el0=0
+write tpidr_el0:    ok=1  back=0xfeed0000beef  fault_signal=0
+write tpidrro_el0:  ok=0  back=0               fault_signal=4
+```
+
+`tpidr_el0` is therefore writable, but borrowing it is still impossible: with
+the pointer repointed at a private block, libc faults on its first TLS access
+in that thread (`fault_signal=11`). Both sysregs are unusable as a guest slot
+base, so the rewrite must call into the bridge. See `SPEC-tls-rewrite.md`.
+
 ### Why the rewrite is separate work
 
 Upstream's `patch_nso.py` emits `mrs tpidrro_el0` plus a key-page offset load,

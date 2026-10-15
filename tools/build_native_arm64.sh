@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-SDK=${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$ROOT/../../android-sdk}}
+SDK=${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/var/minis/workspace/android-sdk}}
 NDK="$SDK/ndk/27.0.12077973"
 PRE="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
 SYS="$PRE/sysroot"
@@ -22,6 +22,9 @@ for src in "$COMPAT"/dm_compat_*.c "$TLS"/android_tls.c "$TLS"/android_tls_thunk
   # shellcheck disable=SC2086
   clang $CFLAGS -c "$src" -o "$OBJ/$name.o"
 done
+# The register-preserving TLS trampolines are assembled separately and linked
+# into the same shared object as the C bridge.
+clang $TGT -fPIC -nostdinc -undef -c "$TLS/tls_trampoline.S" -o "$OBJ/tls_trampoline.o"
 
 clang++ $TGT -fPIC -shared -std=c++20 -fno-stack-protector \
   -nostdinc++ -isystem "$SYS/usr/include/c++/v1" \
