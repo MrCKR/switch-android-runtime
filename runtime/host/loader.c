@@ -325,6 +325,34 @@ static void map_image(module_t *m, const char *dir) {
     m->base = (uint8_t *)base; install_key_page(m);
 }
 #else
+#if DM_TARGET_ANDROID
+static uint32_t android_bl(uintptr_t from, uintptr_t to) {
+    intptr_t d = (intptr_t)to - (intptr_t)from;
+    if ((d & 3) || d < -(1 << 27) || d >= (1 << 27)) die("Android TLS veneer out of range");
+    return 0x94000000u | ((uint32_t)(d >> 2) & 0x03ffffffu);
+}
+extern void dm_tls_tramp_get(void);
+extern void dm_tls_tramp_set(void);
+static void bind_android_tls(module_t *m, const char *dir, size_t rawsz) {
+    char path[1024], line[256];
+    snprintf(path, sizeof path, "%s/%s.fixups.tsv", dir, m->name);
+    FILE *f = fopen(path, "r"); if (!f) return;
+    uintptr_t base = ((uintptr_t)m->base + rawsz + 3) & ~(uintptr_t)3;
+    uint32_t *getv = (uint32_t *)base, *setv = getv + 4;
+    getv[0] = 0x58000050u; getv[1] = 0xd61f0200u;
+    setv[0] = 0x58000050u; setv[1] = 0xd61f0200u;
+    *(uint64_t *)(getv + 2) = (uint64_t)(uintptr_t)dm_tls_tramp_get;
+    *(uint64_t *)(setv + 2) = (uint64_t)(uintptr_t)dm_tls_tramp_set;
+    while (fgets(line, sizeof line, f)) {
+        unsigned long off;
+        if (sscanf(line, "# ANDROID_TLS_GET %lx", &off) == 1)
+            *(uint32_t *)(m->base + off) = android_bl((uintptr_t)(m->base + off), (uintptr_t)getv);
+        else if (sscanf(line, "# ANDROID_TLS_SET %lx", &off) == 1)
+            *(uint32_t *)(m->base + off) = android_bl((uintptr_t)(m->base + off), (uintptr_t)setv);
+    }
+    fclose(f);
+}
+#endif
 static uint8_t *slurp(const char *path, size_t *n) {
     int fd = open(path, O_RDONLY);
     if (fd < 0) die("open %s", path);
@@ -345,6 +373,9 @@ static void map_image(module_t *m, const char *dir) {
     m->base = mmap(NULL, m->size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     if (m->base == MAP_FAILED) die("%s mmap", m->name);
     memcpy(m->base, raw, sz); free(raw); install_key_page(m);
+#if DM_TARGET_ANDROID
+    bind_android_tls(m, dir, sz);
+#endif
     uint64_t rx = (m->text_end + 0x3FFF) & ~0x3FFFull;
     if (mprotect(m->base, rx, PROT_READ | PROT_EXEC)) die("%s mprotect text", m->name);
     uint64_t po = m->patch_off & ~0x3FFFull;

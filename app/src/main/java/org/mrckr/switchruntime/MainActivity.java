@@ -34,8 +34,14 @@ public final class MainActivity extends Activity {
         File guest = new File(guestBase, "guest");
         if (new File(guest, "main.patched.bin").isFile()
                 && new File(guest, "main.fixups.tsv").isFile()
-                && new File(guest, "main.gates.tsv").isFile()) {
+                && new File(guest, "main.gates.tsv").isFile()
+                && new File(guest, "sdk.patched.bin").isFile()
+                && new File(guest, "sdk.fixups.tsv").isFile()
+                && new File(guest, "subsdk0.patched.bin").isFile()
+                && new File(guest, "subsdk0.fixups.tsv").isFile()) {
             nativeLoadGuest(guest.getAbsolutePath());
+        } else {
+            android.util.Log.i("SwitchRuntime", "guest staging incomplete: need main, sdk, and subsdk0 rewritten modules");
         }
 
         setContentView(new RuntimeView(this));

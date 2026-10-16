@@ -1,8 +1,7 @@
 /* Android guest loader API.
  *
- * This first APK integration deliberately stops after mapping, dynamic parsing,
- * gate registration and relocation. It is the same generic loader used by the
- * real-artifact smoke test; no D2R module is entered here yet.
+ * The APK accepts a complete rewritten module set.  Game data remains user
+ * supplied; this API only loads the staged rewritten images and their tables.
  */
 #include "dm.h"
 #include "hle.h"
@@ -16,54 +15,85 @@
 
 struct dm_flags g_flag;
 uint64_t g_t0_ns;
+_Atomic int g_dm_frozen;
+_Atomic int g_frz_by_panel;
+_Atomic int g_bgsave;
 
-uint64_t now_ns(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
-}
-uint64_t guest_ns(void) { return now_ns(); }
+/* Generic host implementations are linked from hle_*.c below. */
 
-/* Generic gate/loader dependencies that belong to the later HLE slices. Keep
- * them explicit: a missing implementation must be visible at link time, not
- * hidden by a weak-symbol soup. */
-uint64_t svc_dispatch(int n, uint64_t *regs, uint64_t orig) {
-    (void)regs; (void)orig;
-    ALOG("BOOT_STUB svc_dispatch num=%#x", n);
-    return 0;
-}
-void hlecount_seal(void) {}
-void *hlecount_wrap(const char *kind, const char *name, void *fn) {
-    (void)kind; (void)name; return fn;
-}
-void dm_thread_returned(void) { ALOG("BOOT_STUB dm_thread_returned"); }
+/* HLE/loader helpers are supplied by the full generic host objects. */
 
-/* HLE/loader helpers referenced by the generic objects but not needed until
- * guest execution is enabled. */
-void dm_guest_write_prepare(void *p, size_t n) { (void)p; (void)n; }
-void dm_guest_write_prep_register(void (*fn)(void *, size_t)) { (void)fn; }
-void dm_fault_hook_register(int (*fn)(void *, int, void *)) { (void)fn; }
-void dm_res_report_register(void (*fn)(uint32_t, const char *)) { (void)fn; }
-void (*dm_res_report_cb(void))(uint32_t, const char *) { return NULL; }
-void dm_backtrace(uint64_t fp) { (void)fp; }
-void crash_watch_progress(uint32_t tick, const char *stage) { (void)tick; (void)stage; }
-void crash_watch_frame(void) {}
-void crash_watch_pregame_done(void) {}
-uint64_t crash_watch_progress_count(void) { return 0; }
-void crash_dump_now(const char *why) { (void)why; }
+void dm_android_start_guest(void);
+void guest_thread_init(void);
 
 int dm_android_load_module_dir(const char *dir) {
     if (!dir || !*dir) return -1;
-    const char *names[] = {"main"};
-    ALOG("guest metadata accepted: staging=%s", dir);
-    load_modules(dir, names, 1);
-    module_t *m = &g_mod[0];
-    ALOG("module main mapped: base=%p size=%#zx patch_off=%#llx text_end=%#llx",
-         (void *)m->base, m->size,
-         (unsigned long long)m->patch_off,
-         (unsigned long long)m->text_end);
-    ALOG("relocations complete");
-    ALOG("gates registered");
-    ALOG("guest entry not entered (metadata smoke mode)");
+    /* The 1.0.34 program load chain is rtld, main, sdk, subsdk0.  rtld is
+     * metadata-only here; the executable modules are loaded in dependency
+     * order so cross-module symbol resolution sees the complete set. */
+    const char *names[] = {"main", "sdk", "subsdk0"};
+    ALOG("guest staging accepted: %s", dir);
+    load_modules(dir, names, 3);
+    for (int i = 0; i < 3; ++i) {
+        module_t *m = &g_mod[i];
+        ALOG("module %s mapped: base=%p size=%#zx patch_off=%#llx text_end=%#llx",
+             m->name, (void *)m->base, m->size,
+             (unsigned long long)m->patch_off,
+             (unsigned long long)m->text_end);
+    }
+    ALOG("guest modules relocated: count=%d", g_nmod);
+    ALOG("guest gates registered");
+    ALOG("guest entry pending: HLE/NVN bootstrap");
+    dm_android_start_guest();
     return 0;
 }
+
+/* Minimal real guest bootstrap entry.  This deliberately uses the already
+ * loaded modules and reports the first failing initialization stage. */
+static void *guest_req(const char *name) {
+    void *p = guest_sym(name);
+    if (!p) { ALOG("guest bootstrap missing symbol: %s", name); return NULL; }
+    return p;
+}
+
+static void *android_guest_bootstrap(void *unused) {
+    (void)unused;
+    ALOG("guest entry: bootstrap thread starting");
+    ALOG("guest entry: before thread environment");
+    guest_thread_init();
+    ALOG("guest entry: thread environment ready");
+    /* svc_thread_main_init is a host function, not a guest export.  The
+     * Android bootstrap currently uses the conventional main-thread handle. */
+    uint32_t hmain = 0x1001;
+    void (*fn0)(void);
+    void (*fn2)(uint64_t, uint64_t);
+    fn0 = (void (*)(void))guest_req("_init_libc0");
+    if (fn0) { ALOG("guest entry: _init_libc0"); fn0(); }
+    fn2 = (void (*)(uint64_t, uint64_t))guest_req("nnosInitialize");
+    if (fn2) { ALOG("guest entry: nnosInitialize"); fn2(hmain, 0); }
+    fn0 = (void (*)(void))guest_req("_init_libc1");
+    if (fn0) { ALOG("guest entry: _init_libc1"); fn0(); }
+    fn0 = (void (*)(void))guest_req("nninitInitializeSdkModule");
+    if (fn0) { ALOG("guest entry: nninitInitializeSdkModule"); fn0(); }
+    fn0 = (void (*)(void))guest_req("nninitStartup");
+    if (fn0) { ALOG("guest entry: nninitStartup"); fn0(); }
+    fn0 = (void (*)(void))guest_req("_init_libc2");
+    if (fn0) { ALOG("guest entry: _init_libc2"); fn0(); }
+    fn0 = (void (*)(void))guest_req("nnMain");
+    if (fn0) { ALOG("guest entry: nnMain"); fn0(); }
+    ALOG("guest entry: nnMain returned");
+    return NULL;
+}
+
+void dm_android_start_guest(void) {
+    static int started;
+    if (__atomic_exchange_n(&started, 1, __ATOMIC_ACQ_REL)) return;
+    pthread_t t;
+    if (pthread_create(&t, NULL, (void *(*)(void *))android_guest_bootstrap, NULL) == 0) {
+        pthread_detach(t);
+        ALOG("guest entry: thread launched");
+    } else {
+        ALOG("guest entry: pthread_create failed");
+    }
+}
+
