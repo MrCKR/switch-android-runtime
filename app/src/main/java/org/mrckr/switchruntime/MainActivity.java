@@ -32,15 +32,33 @@ public final class MainActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
         // App-private storage: the report stays with the app and needs no permission.
-        File dir = new File(getExternalFilesDir(null) != null
-                ? getExternalFilesDir(null) : getFilesDir(), "diagnostics");
+        File base = getExternalFilesDir(null) != null
+                ? getExternalFilesDir(null) : getFilesDir();
+        File dir = new File(base, "diagnostics");
         if (dir.exists() || dir.mkdirs()) nativeSetReportDir(dir.getAbsolutePath());
+
+        // Runtime file mounts.  The guest asks for "rom:/..." and the host
+        // translates it to a real directory, so the resources and the save have
+        // to be pointed at before the guest starts.
+        //   rom  = the extracted RomFS (read-only, the game parses its archives)
+        //   save = a writable directory; the guest writes its save containers here
+        //   temp = scratch space
+        File rom = new File(base, "romfs");
+        File save = new File(base, "save");
+        File temp = new File(base, "temp");
+        for (File d : new File[]{save, temp}) { if (!d.exists()) d.mkdirs(); }
+        try {
+            android.system.Os.setenv("DM_ROMFS", rom.getAbsolutePath(), true);
+            android.system.Os.setenv("DM_SAVE", save.getAbsolutePath(), true);
+            android.system.Os.setenv("DM_TEMP", temp.getAbsolutePath(), true);
+            android.system.Os.setenv("TMPDIR", temp.getAbsolutePath(), true);
+        } catch (Throwable ignored) { }
+        android.util.Log.i("SwitchRuntime", "mounts: rom=" + rom + " save=" + save
+                + " saveWritable=" + save.canWrite());
 
         // Optional local staging smoke test. The directory is populated by the
         // developer build/device harness; an absent directory is not an error.
-        File guestBase = getExternalFilesDir(null) != null
-                ? getExternalFilesDir(null) : getFilesDir();
-        File guest = new File(guestBase, "guest");
+        File guest = new File(base, "guest");
         if (new File(guest, "main.patched.bin").isFile()
                 && new File(guest, "main.fixups.tsv").isFile()
                 && new File(guest, "main.gates.tsv").isFile()

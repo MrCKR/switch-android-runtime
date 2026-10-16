@@ -166,9 +166,9 @@ static void sample_handler(int sig, siginfo_t *si, void *uc_) {
     uint64_t pc = uc->uc_mcontext.pc, lr = uc->uc_mcontext.regs[30];
     uint64_t fp = uc->uc_mcontext.regs[29];
     __android_log_print(ANDROID_LOG_ERROR, "dmhost",
-        "[dm] SAMPLE pc=+%#llx lr=+%#llx fp=+%#llx x0=%#llx x1=%#llx x2=%#llx x19=%#llx x20=%#llx",
-        (unsigned long long)(pc - g_sample_base), (unsigned long long)(lr - g_sample_base),
-        (unsigned long long)(fp ? fp - g_sample_base : 0),
+        "[dm] SAMPLE pc=%#llx lr=%#llx fp=%#llx (mod %s+%#llx) x0=%#llx x1=%#llx x2=%#llx x19=%#llx x20=%#llx",
+        (unsigned long long)pc, (unsigned long long)lr, (unsigned long long)fp,
+        g_sample_mod, (unsigned long long)(pc - g_sample_base),
         (unsigned long long)uc->uc_mcontext.regs[0], (unsigned long long)uc->uc_mcontext.regs[1],
         (unsigned long long)uc->uc_mcontext.regs[2], (unsigned long long)uc->uc_mcontext.regs[19],
         (unsigned long long)uc->uc_mcontext.regs[20]);
