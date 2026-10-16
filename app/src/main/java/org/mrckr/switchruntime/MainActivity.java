@@ -13,6 +13,7 @@ public final class MainActivity extends Activity {
     private native void nativeSetReportDir(String dir);
     private native void nativeSetSurface(android.view.Surface surface);
     private native void nativeSurfaceDestroyed();
+    private native void nativeLoadGuest(String stagingDir);
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -25,6 +26,17 @@ public final class MainActivity extends Activity {
         File dir = new File(getExternalFilesDir(null) != null
                 ? getExternalFilesDir(null) : getFilesDir(), "diagnostics");
         if (dir.exists() || dir.mkdirs()) nativeSetReportDir(dir.getAbsolutePath());
+
+        // Optional local staging smoke test. The directory is populated by the
+        // developer build/device harness; an absent directory is not an error.
+        File guestBase = getExternalFilesDir(null) != null
+                ? getExternalFilesDir(null) : getFilesDir();
+        File guest = new File(guestBase, "guest");
+        if (new File(guest, "main.patched.bin").isFile()
+                && new File(guest, "main.fixups.tsv").isFile()
+                && new File(guest, "main.gates.tsv").isFile()) {
+            nativeLoadGuest(guest.getAbsolutePath());
+        }
 
         setContentView(new RuntimeView(this));
     }

@@ -1,5 +1,8 @@
 #include <jni.h>
 #include <android/log.h>
+#include "dm.h"
+
+extern "C" int dm_android_load_module_dir(const char *dir);
 #include <android/native_window.h>
 #include <android/native_window_jni.h>
 #define VK_USE_PLATFORM_ANDROID_KHR 1
@@ -563,6 +566,17 @@ Java_org_mrckr_switchruntime_MainActivity_nativeSetReportDir(JNIEnv* env, jobjec
             report("compat self-test: FAIL: %s", compat_error);
         }
     }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_mrckr_switchruntime_MainActivity_nativeLoadGuest(JNIEnv* env, jobject, jstring dir) {
+    if (!dir) { report("guest metadata load: missing staging path"); return; }
+    const char* text = env->GetStringUTFChars(dir, nullptr);
+    if (!text) { report("guest metadata load: UTF-8 conversion failed"); return; }
+    report("guest metadata load requested: %s", text);
+    int rc = dm_android_load_module_dir(text);
+    report("guest metadata load: %s (rc=%d)", rc == 0 ? "PASS" : "FAIL", rc);
+    env->ReleaseStringUTFChars(dir, text);
 }
 
 extern "C" JNIEXPORT void JNICALL
