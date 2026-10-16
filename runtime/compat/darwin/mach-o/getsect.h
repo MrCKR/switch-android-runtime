@@ -17,7 +17,7 @@
 #ifndef DM_COMPAT_MACH_O_GETSECT_H
 #define DM_COMPAT_MACH_O_GETSECT_H
 
-#include <stdint.h>
+#include <mach-o/elf_sections.h>
 #include <stddef.h>
 
 #ifdef __cplusplus

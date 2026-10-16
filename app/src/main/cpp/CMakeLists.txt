@@ -17,6 +17,7 @@ set(COMPAT_SOURCES
     "${COMPAT_ROOT}/dm_compat_macho_exec.c"
     "${COMPAT_ROOT}/dm_compat_md5.c"
     "${COMPAT_ROOT}/dm_compat_sha256.c"
+    "${COMPAT_ROOT}/dm_compat_sha1.c"
     "${COMPAT_ROOT}/dm_compat_selftest.c"
     "${COMPAT_ROOT}/dm_compat_xattr.c"
     "${TLS_ROOT}/android_tls.c"
