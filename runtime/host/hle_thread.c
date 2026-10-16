@@ -19,6 +19,7 @@
 // Semantics follow the public Horizon kernel behavior (KConditionVariable / KAddressArbiter / KSynchronization of Atmosphère mesosphère).
 // All waits hang on one global lock G, with one condition variable per thread; correctness first, performance to be measured later.
 #include "dm.h"
+#include "hle.h"
 #include <errno.h>
 #include <sched.h>
 #include <signal.h>
@@ -189,6 +190,11 @@ static void thr_free(thr_t *t) {   // 持 G；从全部线程链摘下并释放 
 static const char *thr_name(thr_t *t, char *buf, size_t n);
 static void thread_exit(thr_t *t) {
     t->exit_ns = now_ns(); t->exit_tick = dm_thread_tick_fn ? dm_thread_tick_fn() : 0;
+    // A guest thread exiting is how every worker's life ends, but it is also the
+    // last thing that happens before an unexplained silence.  Record which one it
+    // was and what it had last called.  Kept to a single LOG so a small stack is
+    // not blown (see the warning below), and gated on DM_THR.
+    if (g_flag.thr) LOG("线程退出：%#x 最后宿主调用=%s", t->handle, dm_hle_trace_get());
     // 这里不打日志：退出发生在客体线程自己的栈上（有的只有十几 KiB），带浮点的 printf 会把栈撑爆（真机冒烟：LibcurlResolver 退出时 SIGBUS，回溯 fprintf → __dtoa）。时刻只记下来，现场导出时再打
     // No logging here: the exit happens on the guest thread's own stack (some are only a dozen or so KiB), and a printf with floating point would blow the stack (real-device smoke test: SIGBUS when LibcurlResolver exits, backtrace fprintf → __dtoa). Only the time is recorded, and it is printed later in the state dump
     pthread_mutex_lock(&G);

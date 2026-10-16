@@ -303,6 +303,7 @@ static Result err_res(const char *op, const char *path) {
 // ---------- Mount ----------
 HLE_FORCE("_ZN2nn2fs22QueryMountRomCacheSizeEPm", "fsp-srv；rom 直读宿主目录，缓存只给最小值", Result, h_fs_QueryRomCache, size_t *out) { *out = 0x1000; return RES_OK; }
 HLE_FORCE("_ZN2nn2fs8MountRomEPKcPvm", "fsp-srv；rom → 宿主 RomFS 目录", Result, h_fs_MountRom, const char *name, void *cache, size_t sz) {
+    DM_HLE_TRACE("h_fs_MountRom");
     (void)cache; (void)sz; char b[1024];
     Result r = mount(name, envdir("DM_ROMFS", "data/switch/3.3.94012/Update/RomFS", b, sizeof b), 1);
     if (r == RES_OK && getenv("DM_ROMFS_OVERLAY")) {
@@ -314,6 +315,7 @@ HLE_FORCE("_ZN2nn2fs8MountRomEPKcPvm", "fsp-srv；rom → 宿主 RomFS 目录", 
     return r;
 }
 HLE_FORCE("_ZN2nn2fs21MountTemporaryStorageEPKc", "fsp-srv；临时区 → 宿主目录", Result, h_fs_MountTemp, const char *name) {
+    DM_HLE_TRACE("h_fs_MountTemp");
     char b[1024]; return mount(name, envdir("DM_TEMP", "run/platform/temp", b, sizeof b), 0);
 }
 HLE_FORCE("_ZN2nn2fs14EnsureSaveDataERKNS_7account3UidE", "fsp-srv；存档目录在挂载时建", Result, h_fs_EnsureSave, const void *uid) { (void)uid; return RES_OK; }
@@ -434,6 +436,7 @@ const char *dm_save_workdir(void) { for (int i = 0; i < g_nmnt; i++) if (g_mnt[i
 const char *dm_save_commitdir(void) { for (int i = 0; i < g_nmnt; i++) if (g_mnt[i].commit[0]) return g_mnt[i].commit; return NULL; }
 void (*g_dm_mount_seed_hook)(const char *save_dir);   // 挂存档前调（存档目录）：往存档里补宿主要的文件 | called before mounting the save (save dir): adds the files the host needs to the save
 HLE_FORCE("_ZN2nn2fs13MountSaveDataEPKcRKNS_7account3UidE", "fsp-srv；存档 → 宿主目录（单用户）", Result, h_fs_MountSave, const char *name, const void *uid) {
+    DM_HLE_TRACE("h_fs_MountSave");
     (void)uid;
     // 不给缺省目录：静默落到一个没有角色的目录上会让「选角」测量失真（曾因此误判过）。跑局一律用 save_ref 的新副本
     // No default directory: silently landing on a directory with no characters distorts the "character select" measurement (this once caused a misjudgment). Runs always use a fresh copy of save_ref
@@ -455,6 +458,7 @@ void (*g_dm_save_commit_hook)(const char *commit_dir);   // 存档提交成功�
 static _Atomic uint64_t g_save_commits;   // 成功提交过几次（前端进后台时等「游戏这次存盘已提交」用） | number of successful commits (used by the front end when going to background to wait for "the game's current save has been committed")
 uint64_t dm_fs_commit_count(void) { return atomic_load(&g_save_commits); }
 HLE_FORCE("_ZN2nn2fs6CommitEPKc", "fsp-srv；事务式存档：工作目录整树 clone 后与已提交目录原子互换（renamex_np RENAME_SWAP）", Result, h_fs_Commit, const char *name) {
+    DM_HLE_TRACE("h_fs_Commit");
     PATH_LOCK(); pthread_mutex_lock(&g_lock);
     int i = 0; while (i < g_nmnt && strcmp(g_mnt[i].name, name)) i++;
     if (i == g_nmnt || !g_mnt[i].commit[0]) { pthread_mutex_unlock(&g_lock); return RES_OK; }   // 非事务挂载：无可提交 | non-transactional mount: nothing to commit
@@ -577,6 +581,7 @@ ssize_t dm_data_pread(int fd, void *buf, size_t n, off_t off) {   // 语义同 p
     return (ssize_t)done;
 }
 HLE_FORCE("_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci", "fsp-srv → open(2)", Result, h_fs_OpenFile, uint64_t *out, const char *path, int mode) {
+    DM_HLE_TRACE("h_fs_OpenFile");
     HP(path);
     if (mode & (MODE_WRITE | MODE_APPEND)) RW();
     int fd = open(hp, (mode & (MODE_WRITE | MODE_APPEND)) ? ((mode & MODE_READ) ? O_RDWR : O_WRONLY) : O_RDONLY);
@@ -594,6 +599,7 @@ HLE_FORCE("_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci", "fsp-srv → open(2)", Re
     return RES_OK;
 }
 HLE_FORCE("_ZN2nn2fs8ReadFileEPmNS0_10FileHandleElPvm", "fsp-srv → pread(2)", Result, h_fs_ReadFile, size_t *out, uint64_t h, int64_t off, void *buf, size_t sz) {
+    DM_HLE_TRACE("h_fs_ReadFile");
     if (!h) { *out = 0; return RES_FAIL; }   // 文件句柄就是 fd，0 是标准输入、不会是游戏打开的文件：打开失败后照用的空句柄 | A file handle is an fd; 0 is standard input and never a file the game opened: it is the null handle the game keeps using after a failed open
     size_t got = 0; uint64_t t0 = g_flag.bootprof ? now_ns() : 0;
     dm_guest_write_prepare(buf, sz);   // 目标可能是图形层写保护的贴图池页：内核写只读页返回 EFAULT 而不缺页，先解保护并标脏 | The destination may be a texture pool page write-protected by the graphics layer: a kernel write to a read-only page returns EFAULT instead of page-faulting, so unprotect and mark dirty first
@@ -620,6 +626,7 @@ HLE_FORCE("_ZN2nn2fs8ReadFileEPmNS0_10FileHandleElPvm", "fsp-srv → pread(2)", 
     return RES_OK;
 }
 HLE_FORCE("_ZN2nn2fs9WriteFileENS0_10FileHandleElPKvmRKNS0_11WriteOptionE", "fsp-srv → pwrite(2)", Result, h_fs_WriteFile, uint64_t h, int64_t off, const void *buf, size_t sz, const void *opt) {
+    DM_HLE_TRACE("h_fs_WriteFile");
     if (!h) return RES_FAIL;
     (void)opt; size_t put = 0;
     if (g_fsave[(int)h & 0xffff]) {                                     // 存档写注入点（确定性回归用；只数存档挂载上的写） | Save write injection point (for deterministic regression; only writes on the save mount are counted)
@@ -642,11 +649,13 @@ HLE_FORCE("_ZN2nn2fs9WriteFileENS0_10FileHandleElPKvmRKNS0_11WriteOptionE", "fsp
     return RES_OK;
 }
 HLE_FORCE("_ZN2nn2fs11GetFileSizeEPlNS0_10FileHandleE", "fsp-srv → fstat(2)", Result, h_fs_GetFileSize, int64_t *out, uint64_t h) {
+    DM_HLE_TRACE("h_fs_GetFileSize");
     if (!h) return RES_FAIL;
     struct stat st; if (fstat((int)h, &st)) return err_res("fstat", "fd");
     *out = (int)h < 4096 && g_hm[(int)h] ? g_hm[(int)h]->size : st.st_size; return RES_OK;
 }
 HLE_FORCE("_ZN2nn2fs11SetFileSizeENS0_10FileHandleEl", "fsp-srv → ftruncate(2)", Result, h_fs_SetFileSize, uint64_t h, int64_t sz) {
+    DM_HLE_TRACE("h_fs_SetFileSize");
     if (!h) return RES_FAIL;
     if (!ftruncate((int)h, sz)) return RES_OK;
     if (g_fsave[(int)h & 0xffff]) save_poison(errno);
@@ -654,6 +663,7 @@ HLE_FORCE("_ZN2nn2fs11SetFileSizeENS0_10FileHandleEl", "fsp-srv → ftruncate(2)
 }
 HLE_FORCE("_ZN2nn2fs9FlushFileENS0_10FileHandleE", "fsp-srv；宿主 write 已进页缓存，刷新为空操作", Result, h_fs_FlushFile, uint64_t h) { (void)h; return RES_OK; }
 HLE_FORCE("_ZN2nn2fs9CloseFileENS0_10FileHandleE", "fsp-srv → close(2)", void, h_fs_CloseFile, uint64_t h) {
+    DM_HLE_TRACE("h_fs_CloseFile");
     if (!h) return;  g_fmode[(int)h & 0xffff] = 0; g_fsave[(int)h & 0xffff] = 0;
     if ((int)h >= 0 && (int)h < 4096 && g_hm[(int)h]) { holemap *m = g_hm[(int)h]; g_hm[(int)h] = NULL; free(m->log); free(m->len); free(m->phys); free(m); }
     close((int)h); }
@@ -662,6 +672,7 @@ HLE_FORCE("_ZN2nn2fs15GetFileOpenModeENS0_10FileHandleE", "fsp-srv；打开方�
 // ---------- 路径操作 ----------
 // ---------- Path operations ----------
 HLE_FORCE("_ZN2nn2fs10CreateFileEPKcl", "fsp-srv → open(O_CREAT|O_EXCL)+ftruncate", Result, h_fs_CreateFile, const char *path, int64_t sz) {
+    DM_HLE_TRACE("h_fs_CreateFile");
     HP_EX(path, 1); RW_CREATE();
     int fd = open(hp, O_WRONLY | O_CREAT | O_EXCL, 0644);
     if (fd < 0) return err_res("create", hp);
@@ -687,9 +698,11 @@ static int rm_tree(const char *p) {
     return rc | rmdir(p);
 }
 HLE_FORCE("_ZN2nn2fs26DeleteDirectoryRecursivelyEPKc", "fsp-srv → 递归删除（只在可写挂载内）", Result, h_fs_DeleteDirRec, const char *path) {
+    DM_HLE_TRACE("h_fs_DeleteDirRec");
     HP(path); RW(); return rm_tree(hp) ? err_res("rmtree", hp) : RES_OK;
 }
 HLE_FORCE("_ZN2nn2fs10RenameFileEPKcS2_", "fsp-srv → rename(2)", Result, h_fs_RenameFile, const char *from, const char *to) {
+    DM_HLE_TRACE("h_fs_RenameFile");
     HP(from); RW(); char hp2[1024];
     if (!host_path_ex(to, hp2, sizeof hp2, NULL, 1)) return err_res("rename path", to);
     if (!access(hp2, F_OK)) return RES_PATH_EXISTS;
@@ -708,6 +721,7 @@ HLE_FORCE("_ZN2nn2fs10RenameFileEPKcS2_", "fsp-srv → rename(2)", Result, h_fs_
     return RES_OK;
 }
 HLE_FORCE("_ZN2nn2fs12GetEntryTypeEPNS0_18DirectoryEntryTypeEPKc", "fsp-srv → stat(2)", Result, h_fs_GetEntryType, int32_t *out, const char *path) {
+    DM_HLE_TRACE("h_fs_GetEntryType");
     HP(path); struct stat st;
     if (stat(hp, &st)) return err_res("stat", hp);
     *out = S_ISDIR(st.st_mode) ? ENT_DIR : ENT_FILE; return RES_OK;
@@ -751,6 +765,7 @@ static void dir_snapshot(dirh_t *h, const mount_t *m, const char *rest) {
     free(resolved); free(rel); free(guest); free(parent); free(all); free(names); free(roots);
 }
 HLE_FORCE("_ZN2nn2fs13OpenDirectoryEPNS0_15DirectoryHandleEPKci", "fsp-srv → opendir(3)", Result, h_fs_OpenDirectory, uint64_t *out, const char *path, int mode) {
+    DM_HLE_TRACE("h_fs_OpenDirectory");
     HP(path); DIR *d = opendir(hp);
     if (!d) return err_res("opendir", hp);
     dirh_t *h = calloc(1, sizeof *h); h->d = d; strlcpy(h->path, hp, sizeof h->path); h->mode = mode;
@@ -761,6 +776,7 @@ HLE_FORCE("_ZN2nn2fs13OpenDirectoryEPNS0_15DirectoryHandleEPKci", "fsp-srv → o
     *out = (uint64_t)h; return RES_OK;
 }
 HLE_FORCE("_ZN2nn2fs13ReadDirectoryEPlPNS0_14DirectoryEntryENS0_15DirectoryHandleEl", "fsp-srv → readdir(3)", Result, h_fs_ReadDirectory, int64_t *count, DirectoryEntry *ents, uint64_t hh, int64_t max) {
+    DM_HLE_TRACE("h_fs_ReadDirectory");
     if (!hh) { *count = 0; return RES_FAIL; }
     PATH_LOCK(); dirh_t *h = (dirh_t *)hh; int64_t n = 0; struct dirent *e;
     if (h->snap) { while (n < max && h->psnap < h->nsnap) { DirectoryEntry *src = &h->snap[h->psnap++]; if (!(h->mode & (src->type == ENT_DIR ? DIRMODE_DIR : DIRMODE_FILE))) continue; ents[n++] = *src; } *count = n; return RES_OK; }
@@ -778,6 +794,7 @@ HLE_FORCE("_ZN2nn2fs13ReadDirectoryEPlPNS0_14DirectoryEntryENS0_15DirectoryHandl
     *count = n; return RES_OK;
 }
 HLE_FORCE("_ZN2nn2fs14CloseDirectoryENS0_15DirectoryHandleE", "fsp-srv → closedir(3)", void, h_fs_CloseDirectory, uint64_t hh) {
+    DM_HLE_TRACE("h_fs_CloseDirectory");
     if (!hh) return;   // 游戏在打开失败后也会关（句柄是 0）：原版无事可做 | The game also closes after a failed open (handle 0): nothing to do in the original either
     dirh_t *h = (dirh_t *)hh; closedir(h->d); if (h->od) closedir(h->od); free(h->snap); free(h);
 }

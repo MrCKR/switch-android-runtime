@@ -60,7 +60,7 @@ for src in "$COMPAT"/dm_compat_*.c "$TLS"/android_tls.c "$TLS"/android_tls_thunk
            "$HOST"/android_host_defaults.c "$HOST"/android_boot_stubs.c \
            "$HOST"/android_host_contract.c "$HOST"/android_unwind_stub.c \
            "$HOST"/thread.c "$HOST"/crash.c "$HOST"/romfs_validate.c \
-           "$HOST"/hle_*.c "$HOST"/hle.c "$HOST"/loader.c "$HOST"/android_loader_api.c; do
+           "$HOST"/hle_trace.c "$HOST"/hle_*.c "$HOST"/hle.c "$HOST"/loader.c "$HOST"/android_loader_api.c; do
   name=$(basename "$src" .c)
   # shellcheck disable=SC2086
   clang $CFLAGS -c "$src" -o "$OBJ/$name.o"

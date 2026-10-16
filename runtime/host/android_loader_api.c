@@ -159,16 +159,24 @@ void dm_host_flags_init(void) {
 static int g_sample_on;
 static const char *g_sample_mod;
 static uint64_t g_sample_base;
+static uint64_t g_sample_size;   // module extent, so an out-of-module pc is reported as such
 
 static void sample_handler(int sig, siginfo_t *si, void *uc_) {
     (void)sig; (void)si;
     ucontext_t *uc = (ucontext_t *)uc_;
     uint64_t pc = uc->uc_mcontext.pc, lr = uc->uc_mcontext.regs[30];
     uint64_t fp = uc->uc_mcontext.regs[29];
+    // pc - base is only meaningful when pc actually lies inside the sampler's
+    // module; a host-library frame (the thread parked in sched_yield, say) yields
+    // an absurd offset like 0x340000000 and reads as if the guest were stuck
+    // somewhere it never went.  Report the two cases differently.
+    uint64_t off = pc - g_sample_base;
+    int inside = off < g_sample_size;
     __android_log_print(ANDROID_LOG_ERROR, "dmhost",
-        "[dm] SAMPLE pc=%#llx lr=%#llx fp=%#llx (mod %s+%#llx) x0=%#llx x1=%#llx x2=%#llx x19=%#llx x20=%#llx",
+        "[dm] SAMPLE pc=%#llx lr=%#llx fp=%#llx (%s %s+%#llx) hl=%s x0=%#llx x1=%#llx x2=%#llx x19=%#llx x20=%#llx",
         (unsigned long long)pc, (unsigned long long)lr, (unsigned long long)fp,
-        g_sample_mod, (unsigned long long)(pc - g_sample_base),
+        inside ? "in" : "OUTSIDE", g_sample_mod, (unsigned long long)(inside ? off : 0),
+        dm_hle_trace_get(),
         (unsigned long long)uc->uc_mcontext.regs[0], (unsigned long long)uc->uc_mcontext.regs[1],
         (unsigned long long)uc->uc_mcontext.regs[2], (unsigned long long)uc->uc_mcontext.regs[19],
         (unsigned long long)uc->uc_mcontext.regs[20]);
@@ -180,6 +188,7 @@ void dm_android_sample_start(const char *mod, uint64_t base, int seconds) {
 #if DM_TARGET_ANDROID
     if (seconds <= 0) return;
     g_sample_mod = mod; g_sample_base = base; g_sample_on = seconds;
+    g_sample_size = g_mod[1].size;
     struct sigaction sa;
     memset(&sa, 0, sizeof sa);
     sa.sa_sigaction = sample_handler;

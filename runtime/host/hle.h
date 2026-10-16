@@ -37,6 +37,22 @@ void guest_clock_freeze_for(int reason, int on);   // 按原因冻结（1 后台
 // Used only for the service-layer nn:: (service clients of fs/oe/aoc/pctl...); the SDK's libc++ and nn::os internals do not go into this table.
 // Every entry must state the reason for the takeover; an entry in the table that no module references makes loading report a failure and abort (a wrong list must fail loudly).
 typedef struct { const char *name; void *fn; const char *why; } hle_force_ent;
+
+// Last-entry trace.  When the guest stops making progress, the log simply ends
+// and there is no way to tell which host call it was inside.  Thread-local so
+// concurrent guest threads do not overwrite each other, and cheap enough to
+// leave on: one pointer store per call.  DM_SVC=1 prints it from the sampler.
+#if defined(__ANDROID__)
+const char *dm_hle_trace_enter(const char *why);
+#define DM_HLE_TRACE(why) const char *dm_hle_prev_ = dm_hle_trace_enter(why)
+const char *dm_hle_trace_leave(const char *prev);
+#define DM_HLE_UNTRACE(prev) dm_hle_trace_leave(prev)
+const char *dm_hle_trace_get(void);
+#else
+#define DM_HLE_TRACE(why) do { (void)(why); } while (0)
+#define DM_HLE_UNTRACE(prev) do { (void)(prev); } while (0)
+#endif
+
 #define HLE_FORCE(mangled, why, ret, cname, ...)                                                   \
     static ret cname(__VA_ARGS__);                                                                \
     __attribute__((used, section("dmsec_swforce"))) static const hle_force_ent hle_force_##cname = {mangled, (void *)cname, why}; \
