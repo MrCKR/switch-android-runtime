@@ -129,14 +129,25 @@ static Result mount(const char *name, const char *dir, int ro) { return mount_ex
 // clonefile 保留 xattr，故存档 Commit/重挂不用另设映射表；列举不能泄露物理别名。
 // APFS is case-insensitive by default, Horizon paths are case-sensitive: every component is looked up exactly by guest name.
 // Ordinary host names are unchanged; only when a name collides on the host is a separate physical name chosen, with the guest name stored in an xattr.
-// clonefile preserves xattr, so save Commit/remount needs no separate mapping table; enumeration must not leak physical aliases.
+// clonefile preserves xattr, so save Commit/remount needs no separate mapping
+// table; enumeration must not leak physical aliases.
+//
+// On a platform where the attribute cannot be read at all — Android's SELinux
+// domain cannot see user.* xattrs in its own data directory, so getxattr returns
+// EOPNOTSUPP rather than ENOATTR — the physical name IS the guest name.  That is
+// what this fallback expresses.  Treating EOPNOTSUPP as failure instead made
+// every path lookup fail, which is why the guest stopped right after trying to
+// create "Diablo II": the file system looked empty.
 #define FS_GUEST_NAME "org.d2rmobile.guest-name"
 static int guest_name(const char *parent, const char *physical, char *out, size_t n) {
     char p[1280]; snprintf(p, sizeof p, "%s/%s", parent, physical);
     ssize_t k = getxattr(p, FS_GUEST_NAME, out, n - 1, 0, XATTR_NOFOLLOW);
     if (k >= 0) { out[k] = 0; return 1; }
-    if (errno != ENOATTR) return 0;
-    strlcpy(out, physical, n); return 1;
+    if (errno == ENOATTR || errno == EOPNOTSUPP || errno == ENOTSUP) {
+        // No usable attribute store: names are their physical spelling.
+        strlcpy(out, physical, n); return 1;
+    }
+    return 0;
 }
 static int path_component(char *parent, size_t n, const char *name, int create) {
     DIR *d = opendir(parent); if (!d) return 0;
@@ -248,6 +259,31 @@ static int set_guest_name(const char *hp, const char *path) {
     if (strcmp(physical, guest)) return setxattr(hp, FS_GUEST_NAME, guest, strlen(guest), 0, XATTR_NOFOLLOW);
     if (!removexattr(hp, FS_GUEST_NAME, XATTR_NOFOLLOW) || errno == ENOATTR) return 0;
     return -1;
+}
+
+// Android cannot always store the guest's original name.
+//
+// The extension attribute above is how the host remembers the name the guest
+// used, and on Darwin it always succeeds.  On Android it does not: the app's
+// SELinux domain has no write access to user.* xattrs on its own data
+// directory, so setxattr returns EOPNOTSUPP (95).  Returning that made every
+// CreateDirectory and CreateFile fail after the directory or file had already
+// been created successfully — the guest saw a filesystem that could not be
+// written to at all, which is what stalled it right after "Diablo II".
+//
+// The attribute is a convenience (it lets a later listing restore the original
+// name), not a correctness requirement: the physical name is what the guest
+// path resolves to, and the file/directory itself is already in place.  So a
+// host that cannot keep the note logs it once and moves on.
+static int note_guest_name(const char *hp, const char *path) {
+    if (!set_guest_name(hp, path)) return 0;
+    static int warned = 0;
+    if (!warned) {
+        warned = 1;
+        LOG("宿主无法记录客体原名（errno=%d）——该平台不支持写入扩展属性，"
+            "后续只按物理名解析；目录与文件本身已正常建好", errno);
+    }
+    return 0;
 }
 static Result err_res(const char *op, const char *path) {
     if (errno == ENOENT || errno == ENOTDIR) return RES_PATH_NOT_FOUND;
@@ -630,14 +666,14 @@ HLE_FORCE("_ZN2nn2fs10CreateFileEPKcl", "fsp-srv → open(O_CREAT|O_EXCL)+ftrunc
     int fd = open(hp, O_WRONLY | O_CREAT | O_EXCL, 0644);
     if (fd < 0) return err_res("create", hp);
     int rc = ftruncate(fd, sz); int e = errno; close(fd);
-    if (!rc && set_guest_name(hp, path)) { rc = -1; e = errno; }
+    if (!rc) note_guest_name(hp, path);
     if (rc) unlink(hp);
     errno = e; return rc ? err_res("create", hp) : RES_OK;
 }
 HLE_FORCE("_ZN2nn2fs10DeleteFileEPKc", "fsp-srv → unlink(2)", Result, h_fs_DeleteFile, const char *path) { HP(path); RW(); return unlink(hp) ? err_res("unlink", hp) : RES_OK; }
 HLE_FORCE("_ZN2nn2fs15CreateDirectoryEPKc", "fsp-srv → mkdir(2)", Result, h_fs_CreateDirectory, const char *path) { HP_EX(path, 1); RW_CREATE();
     if (mkdir(hp, 0755)) return err_res("mkdir", hp);
-    if (set_guest_name(hp, path)) { int e = errno; rmdir(hp); errno = e; return err_res("mkdir name", hp); }
+    note_guest_name(hp, path);
     return RES_OK; }
 static int rm_tree(const char *p) {
     DIR *d = opendir(p); if (!d) return -1;
@@ -659,6 +695,13 @@ HLE_FORCE("_ZN2nn2fs10RenameFileEPKcS2_", "fsp-srv → rename(2)", Result, h_fs_
     if (!access(hp2, F_OK)) return RES_PATH_EXISTS;
     if (rename(hp, hp2)) return err_res("rename", hp);
     if (dm_fs_test_fail("guestname") || set_guest_name(hp2, to)) { int e = errno ? errno : EIO;
+        // The attribute is a note, not a requirement — same reasoning as
+        // note_guest_name below.  On a host that cannot store it the rename has
+        // already succeeded, so rolling it back would be the wrong repair.
+        // DM_TEST_FS_FAIL still forces the failure path for the test suite.
+        if (!dm_fs_test_fail("guestname")) {
+            note_guest_name(hp2, to);
+        } else
         if (dm_fs_test_fail("renameback") || rename(hp2, hp)) {   // 回退也失败：文件留在新路径、客体名元数据不对；不退出——在事务存档里就让本事务提交被拒（已提交版本不变，重新克隆即复原） | Rollback also failed: the file stays at the new path with wrong guest-name metadata; do not exit. In a transactional save, this transaction's commit is refused (the committed version is unchanged and recloning restores it)
             LOG("【红】fs 改名元数据失败且回退失败 errno=%d：%s 留在新路径%s", errno, hp2, in_txn_dir(hp2) ? "，本事务存档提交将被拒" : ""); if (in_txn_dir(hp2)) save_poison(e); }
         errno = e; return err_res("rename name", hp2); }

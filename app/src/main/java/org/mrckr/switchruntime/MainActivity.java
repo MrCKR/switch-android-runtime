@@ -25,6 +25,9 @@ public final class MainActivity extends Activity {
             android.system.Os.setenv("DM_SVC", "1", false);
             android.system.Os.setenv("DM_THR", "1", false);
             android.system.Os.setenv("DM_SAMPLE", "2", false);
+            // DM_FS logs every file the guest opens; without it a silently
+            // failing resource load looks like the guest simply doing nothing.
+            android.system.Os.setenv("DM_FS", "1", false);
         } catch (Throwable ignored) { }
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
@@ -43,9 +46,18 @@ public final class MainActivity extends Activity {
         //   rom  = the extracted RomFS (read-only, the game parses its archives)
         //   save = a writable directory; the guest writes its save containers here
         //   temp = scratch space
+        //
+        // save and temp MUST live on internal storage.  /storage/emulated/0/...
+        // is served by the FUSE layer under scoped storage, and a plain mkdir(2)
+        // against it fails with EOPNOTSUPP (95) — the guest's own "Diablo II"
+        // directory could never be created there.  Internal storage is a real
+        // filesystem, so the syscalls the guest makes actually work.
+        //
+        // The RomFS is the exception: it is 8.4 GB and has to be read from where
+        // it was pushed, so it stays on external storage and is only ever read.
         File rom = new File(base, "romfs");
-        File save = new File(base, "save");
-        File temp = new File(base, "temp");
+        File save = new File(getFilesDir(), "save");
+        File temp = new File(getFilesDir(), "temp");
         for (File d : new File[]{save, temp}) { if (!d.exists()) d.mkdirs(); }
         try {
             android.system.Os.setenv("DM_ROMFS", rom.getAbsolutePath(), true);

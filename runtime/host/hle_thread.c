@@ -591,6 +591,27 @@ int svc_thread(int num, uint64_t *regs) {
     case 0x18: {  // WaitSynchronization(→w1 下标; x1 句柄数组, w2 个数, x3 超时) | WaitSynchronization(→w1 index; x1 handle array, w2 count, x3 timeout)
         thr_t *t = cur(); const uint32_t *hs = (const uint32_t *)regs[1]; int n = (int)regs[2]; int64_t ns = (int64_t)regs[3];
         int64_t deadline = ns > 0 ? (dm_detclock_enabled() ? (int64_t)guest_ns() : now_mono_ns()) + ns : 0;
+        // An infinite wait that never returns leaves no trace at all: the log
+        // simply stops.  Record what is being waited on so a hang can be told
+        // apart from a crash.  Printed once per handle set to keep the log small.
+        if (ns < 0 && g_flag.thr) {
+            static uint64_t seen[8]; static int nseen = 0;
+            uint64_t sig = 1469598103934665603ull;   // FNV-1a over the handle list
+            for (int i = 0; i < n && i < 8; i++) { sig ^= hs[i]; sig *= 1099511628211ull; }
+            int dup = 0;
+            for (int i = 0; i < nseen; i++) if (seen[i] == sig) dup = 1;
+            if (!dup && nseen < 8) {
+                seen[nseen++] = sig;
+                char hs_txt[160] = ""; size_t o = 0;
+                for (int i = 0; i < n && i < 8; i++) {
+                    thr_t *w = h_get(hs[i], O_THREAD);
+                    o += (size_t)snprintf(hs_txt + o, sizeof hs_txt - o, "%s%#x(%s)",
+                                          i ? " " : "", hs[i],
+                                          g_h[hs[i] - 0x1000].type == O_THREAD ? (w && w->exited ? "exited" : "running") : "other");
+                }
+                LOG("等待：同步 [%s] 超时=无限 谁=%#x", hs_txt, t ? t->handle : 0);
+            }
+        }
         pthread_mutex_lock(&G);
         int64_t r; int idx = -1;
         for (;;) {

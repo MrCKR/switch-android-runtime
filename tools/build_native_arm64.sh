@@ -33,6 +33,20 @@ CFLAGS="$TGT -fPIC -std=gnu11 -fno-stack-protector -fblocks -I$COMPAT/darwin -I$
 # An adapter build therefore produces its own object files / archive and is
 # added at link time by whoever packages them together; the seat it fills while
 # it is absent is runtime/adapter_seam.
+#
+# Point DM_ADAPTER at a d2r-android-adapter checkout that has already run that
+# repo's tools/build-android-arm64.sh.  Its archive is linked with --whole-archive
+# so every module is pulled in even when nothing references it directly, and its
+# strong definitions replace the weak seats above with no other configuration.
+ADAPTER=${DM_ADAPTER:-$ROOT/../d2r-adapter-x}
+ADAPTER_LIB="$ADAPTER/build/android-arm64/libd2r_adapter.a"
+ADAPTER_ARGS=""
+if [ -f "$ADAPTER_LIB" ]; then
+  echo "adapter: $ADAPTER_LIB"
+  ADAPTER_ARGS="-Wl,--whole-archive $ADAPTER_LIB -Wl,--no-whole-archive"
+else
+  echo "adapter: not built at $ADAPTER_LIB — linking with the inert seats only"
+fi
 
 # Compile the C compatibility layer as C, not as C++, so the upstream-facing
 # ABI remains exactly the one validated by compile_upstream_modules.sh.
@@ -44,6 +58,7 @@ for src in "$COMPAT"/dm_compat_*.c "$TLS"/android_tls.c "$TLS"/android_tls_thunk
            "$ROOT"/runtime/third_party/libdeflate/lib/zlib_decompress.c \
            "$ROOT"/runtime/adapter_seam/*.c \
            "$HOST"/android_host_defaults.c "$HOST"/android_boot_stubs.c \
+           "$HOST"/android_host_contract.c "$HOST"/android_unwind_stub.c \
            "$HOST"/thread.c "$HOST"/crash.c "$HOST"/romfs_validate.c \
            "$HOST"/hle_*.c "$HOST"/hle.c "$HOST"/loader.c "$HOST"/android_loader_api.c; do
   name=$(basename "$src" .c)
@@ -57,17 +72,9 @@ clang $TGT -fPIC -nostdinc -undef -c "$TLS/tls_trampoline.S" -o "$OBJ/tls_trampo
 
 clang $TGT -fPIC -nostdinc -undef -c "$HOST/entry.S" -o "$OBJ/host_entry.o"
 
-clang++ $TGT -resource-dir "$PRE/lib/clang/18" -fPIC -shared -std=c++20 -fno-stack-protector \
-  -nostdinc++ -isystem "$SYS/usr/include/c++/v1" -I"$HOST" \
-  "$ROOT/app/src/main/cpp/runtime.cpp" "$OBJ"/*.o \
-  -L"$ROOT/build/host-libs" \
-  -L"$SYS/usr/lib/aarch64-linux-android/29" \
-  -L"$SYS/usr/lib/aarch64-linux-android" \
-  -L"$PRE/lib/clang/18/lib/linux" \
-  -L/tmp/rt-stub \
-  -rtlib=compiler-rt -unwindlib=none \
-  -lc++_shared -landroid -llog -laaudio -lvulkan \
-  -o "$OUT/libswitch_runtime.so"
+# Linking lives in its own script so the strict resolution check --no-undefined
+# is applied to production builds too, not just to a manual test.
+sh "$ROOT/tools/link_native_arm64.sh"
 
 # Package the shared C++ runtime next to the library so the APK is self-contained.
 for cxx in "$SYS/usr/lib/aarch64-linux-android/libc++_shared.so" \
