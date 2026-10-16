@@ -13,11 +13,13 @@ mkdir -p "$OUT" "$OBJ" "$ROOT/build/host-libs"
 TGT="--target=aarch64-linux-android29 --sysroot=$SYS -resource-dir=$PRE/lib/clang/18"
 COMPAT="$ROOT/runtime/compat"
 TLS="$ROOT/runtime/tls"
-CFLAGS="$TGT -fPIC -std=c11 -fno-stack-protector -fblocks -I$COMPAT/darwin -I$COMPAT -I$TLS -include $COMPAT/darwin/platform_compat.h"
+HOST="$ROOT/runtime/host"
+CFLAGS="$TGT -fPIC -std=c11 -fno-stack-protector -fblocks -I$COMPAT/darwin -I$COMPAT -I$TLS -I$HOST -include $COMPAT/darwin/platform_compat.h"
 
 # Compile the C compatibility layer as C, not as C++, so the upstream-facing
 # ABI remains exactly the one validated by compile_upstream_modules.sh.
-for src in "$COMPAT"/dm_compat_*.c "$TLS"/android_tls.c "$TLS"/android_tls_thunk.c; do
+for src in "$COMPAT"/dm_compat_*.c "$TLS"/android_tls.c "$TLS"/android_tls_thunk.c \
+           "$HOST"/android_boot_stubs.c "$HOST"/hle.c "$HOST"/loader.c "$HOST"/android_loader_api.c; do
   name=$(basename "$src" .c)
   # shellcheck disable=SC2086
   clang $CFLAGS -c "$src" -o "$OBJ/$name.o"
@@ -26,8 +28,10 @@ done
 # into the same shared object as the C bridge.
 clang $TGT -fPIC -nostdinc -undef -c "$TLS/tls_trampoline.S" -o "$OBJ/tls_trampoline.o"
 
+clang $TGT -fPIC -nostdinc -undef -c "$HOST/entry.S" -o "$OBJ/host_entry.o"
+
 clang++ $TGT -fPIC -shared -std=c++20 -fno-stack-protector \
-  -nostdinc++ -isystem "$SYS/usr/include/c++/v1" \
+  -nostdinc++ -isystem "$SYS/usr/include/c++/v1" -I"$HOST" \
   "$ROOT/app/src/main/cpp/runtime.cpp" "$OBJ"/*.o \
   -L"$ROOT/build/host-libs" \
   -L"$SYS/usr/lib/aarch64-linux-android/29" \

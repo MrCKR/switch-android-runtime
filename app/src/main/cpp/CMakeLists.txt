@@ -20,6 +20,7 @@ set(COMPAT_SOURCES
     "${COMPAT_ROOT}/dm_compat_sha1.c"
     "${COMPAT_ROOT}/dm_compat_selftest.c"
     "${COMPAT_ROOT}/dm_compat_xattr.c"
+    "${RUNTIME_ROOT}/runtime/host/android_boot_stubs.c"
     "${TLS_ROOT}/android_tls.c"
     "${TLS_ROOT}/android_tls_thunk.c"
 )
@@ -28,12 +29,17 @@ add_library(switch_runtime SHARED
     runtime.cpp
     ${COMPAT_SOURCES}
     "${TLS_ROOT}/tls_trampoline.S"
+    "${RUNTIME_ROOT}/runtime/host/hle.c"
+    "${RUNTIME_ROOT}/runtime/host/loader.c"
+    "${RUNTIME_ROOT}/runtime/host/android_loader_api.c"
+    "${RUNTIME_ROOT}/runtime/host/entry.S"
 )
 
 target_include_directories(switch_runtime PRIVATE
     "${COMPAT_DARWIN}"
     "${COMPAT_ROOT}"
     "${TLS_ROOT}"
+    "${RUNTIME_ROOT}/runtime/host"
 )
 
 target_compile_options(switch_runtime PRIVATE
