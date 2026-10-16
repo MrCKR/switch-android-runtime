@@ -8,6 +8,11 @@ SYS="$PRE/sysroot"
 OUT="$ROOT/app/src/main/jniLibs/arm64-v8a"
 OBJ="$ROOT/build/compat-objects"
 mkdir -p "$OUT" "$OBJ" "$ROOT/build/host-libs"
+# Rebuild the object directory from scratch every time: a stale object from an
+# earlier configuration (for example an adapter module left over from a build
+# that compiled one) would otherwise be linked in silently and collide with the
+# real adapter archive.
+rm -rf "$OBJ"; mkdir -p "$OBJ"
 : > "$ROOT/build/host-libs/libssp_nonshared.a"
 
 # Note: do NOT add -resource-dir here. The build uses the host clang, and
@@ -19,6 +24,15 @@ COMPAT="$ROOT/runtime/compat"
 TLS="$ROOT/runtime/tls"
 HOST="$ROOT/runtime/host"
 CFLAGS="$TGT -fPIC -std=gnu11 -fno-stack-protector -fblocks -I$COMPAT/darwin -I$COMPAT -I$TLS -I$HOST -I$ROOT/runtime/third_party/libdeflate -I$ROOT/runtime/third_party/libdeflate/lib -include $COMPAT/darwin/platform_compat.h"
+
+# The runtime never compiles adapter sources.  Direction of the dependency is
+# adapter -> runtime: the runtime exposes the host surface (dm_* helpers, g_mod,
+# uimsg_emit, ...) and the adapter consumes it.  See d2r-android-adapter's
+# docs/CONTRACT.md, whose link test proves exactly this direction.
+#
+# An adapter build therefore produces its own object files / archive and is
+# added at link time by whoever packages them together; the seat it fills while
+# it is absent is runtime/adapter_seam.
 
 # Compile the C compatibility layer as C, not as C++, so the upstream-facing
 # ABI remains exactly the one validated by compile_upstream_modules.sh.
