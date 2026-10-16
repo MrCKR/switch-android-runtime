@@ -180,6 +180,10 @@ static void *thread_main(void *p) {
     crash_thread_init();
     guest_thread_init();
     pthread_mutex_lock(&G); while (!t->started) pthread_cond_wait(&t->cv, &G); pthread_mutex_unlock(&G);
+    // Entering the guest is the last thing this host thread does, and it does not
+    // come back.  Logging here separates "the worker never ran" from "it ran and
+    // its entry returned", which otherwise look identical in the log.
+    if (g_flag.thr) LOG("线程进入客体：%#x entry=%#llx arg=%#llx", t->handle, t->entry, t->arg);
     dm_thread_enter(t->entry, t->arg, t->stack_top);   // 不返回：客体须经 ExitThread 退出 | Does not return: the guest must exit through ExitThread
     die("客体线程入口返回");
 }
