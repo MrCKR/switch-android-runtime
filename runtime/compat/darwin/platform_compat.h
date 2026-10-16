@@ -23,6 +23,9 @@
 #include <fcntl_ext.h>
 #include <rename_ext.h>
 #include <sys/xattr.h>
+#include <sigcontext_compat.h>
+#include <sys/sysctl.h>
+#include <pthread_tls_compat.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -42,6 +45,17 @@ static inline int getdtablesize(void) {
     if (rl.rlim_cur > 0x7fffffff) return 0x7fffffff;
     return (int)rl.rlim_cur;
 }
+#endif
+
+/* Darwin stat/time names used by the migrated D2R modules. */
+#ifndef st_mtimespec
+#define st_mtimespec st_mtim
+#endif
+
+/* Darwin's monotonic nanosecond clock spelling. Android CLOCK_MONOTONIC is
+ * the corresponding Linux clock; the value is only used for elapsed deltas. */
+#ifndef CLOCK_UPTIME_RAW
+#define CLOCK_UPTIME_RAW CLOCK_MONOTONIC
 #endif
 
 #ifdef __cplusplus

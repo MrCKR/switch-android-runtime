@@ -46,6 +46,10 @@ void dm_compat_reset_sections(void) {
 
 const uint8_t *dm_compat_find_section(const char *seg, const char *sect,
                                       unsigned long *out_size) {
+    if (sect && (!strcmp(sect, "swhle") || !strcmp(sect, "swforce") || !strcmp(sect, "swnvn"))) {
+        const uint8_t *p = dm_elf_section(seg, sect, out_size);
+        if (p) return p;
+    }
     for (int i = 0; i < g_section_count; i++) {
         if (name_eq(g_sections[i].seg, seg) && name_eq(g_sections[i].sect, sect)) {
             if (out_size) *out_size = g_sections[i].size;

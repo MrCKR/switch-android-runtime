@@ -61,4 +61,6 @@ uint8_t *CC_SHA256(const void *data, CC_LONG len, uint8_t *md);
 }
 #endif
 
+#include <CommonCrypto/CommonDigestSHA1.h>
+
 #endif /* DM_COMPAT_COMMONCRYPTO_H */
