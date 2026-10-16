@@ -4,6 +4,9 @@
 // Crash state: prints the faulting address, pc, lr (converted to module-relative offsets) and the registers; dispatches page fault hooks.
 // Only signal handling itself lives here: diagnostic features (probes / UI messages / sampling) are in diag.c, and this file does not depend on them (the graphics unit tests link only this file).
 #include "dm.h"
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
 #include <signal.h>
 #include <dlfcn.h>
 #include <sys/ucontext.h>
@@ -79,21 +82,34 @@ void crash_off(const char *tag, uint64_t a) {   // diag.c 也用 | Also used by 
 
     module_t *m = module_of((void *)a);
     Dl_info di;
+#ifdef __ANDROID__
+    // Android drops stderr, so crash output has to go to logcat to be visible.
+    if (m) __android_log_print(ANDROID_LOG_ERROR, "dmhost", "[dm] %s%s%s+%#llx", tag, *tag ? "=" : "", m->name, (unsigned long long)(a - (uint64_t)m->base));
+    else if (dladdr((void *)a, &di) && di.dli_sname) __android_log_print(ANDROID_LOG_ERROR, "dmhost", "[dm] %s%s%s+%#lx", tag, *tag ? "=" : "", di.dli_sname, (unsigned long)(a - (uint64_t)di.dli_saddr));
+    else __android_log_print(ANDROID_LOG_ERROR, "dmhost", "[dm] %s%s%#llx", tag, *tag ? "=" : "", (unsigned long long)a);
+#else
     if (m) fprintf(stderr, " %s%s%s+%#llx", tag, *tag ? "=" : "", m->name, a - (uint64_t)m->base);
     else if (dladdr((void *)a, &di) && di.dli_sname) fprintf(stderr, " %s%s%s+%#lx", tag, *tag ? "=" : "", di.dli_sname, (unsigned long)(a - (uint64_t)di.dli_saddr));
     else fprintf(stderr, " %s%s%#llx", tag, *tag ? "=" : "", a);
+#endif
 }
 // 帧指针回溯：x29 链 [fp]=上一帧 fp、[fp+8]=返回地址；只走 8 字节对齐、单调上升的帧
 // Frame pointer backtrace: x29 chain [fp]=previous frame's fp, [fp+8]=return address; only 8-byte aligned, monotonically increasing frames are walked
 void dm_backtrace(uint64_t fp) {
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_ERROR, "dmhost", "[dm] bt:");
+#else
     fprintf(stderr, "[dm] bt:");
+#endif
     for (int i = 0; i < 32 && fp && !(fp & 7); i++) {
         uint64_t nfp = ((uint64_t *)fp)[0], ra = ((uint64_t *)fp)[1];
         off("", ra);
         if (nfp <= fp) break;
         fp = nfp;
     }
+#ifndef __ANDROID__
     fputc('\n', stderr);
+#endif
 }
 // ---------- 缺页钩子（写保护脏页跟踪） ----------
 // on_crash 打印现场前按注册顺序调用；返回 1 = 已处理（直接返回、重执行出错指令），全部返回 0 才走崩溃路径。
@@ -128,7 +144,23 @@ void crash_set_dump_hook(void (*fn)(void)) { g_dump_hook = fn; }
 void crash_set_wait_dump(void (*fn)(void)) { g_wait_dump = fn; }
 // 按需导出现场（不退出）：iOS 包没有无进展看门狗，冒烟判红时经 DM_LOG_PORT 发 dump 触发——各客体线程在等什么 + 图形侧等待点，和看门狗打的是同一份
 // Dump the current state on demand (without exiting): the iOS app has no no-progress watchdog, so when the smoke test fails it sends dump through DM_LOG_PORT to trigger this -- what each guest thread is waiting on + the graphics-side wait points, the same thing the watchdog prints
-void crash_dump_now(const char *why) { fprintf(stderr, "[dm] 现场导出（%s）：拍 %u / 阶段 %s\n", why, atomic_load(&g_watch_tick), g_watch_stage[atomic_load(&g_watch_stage_idx)]); if (g_dump_hook) g_dump_hook(); if (g_wait_dump) g_wait_dump(); }
+#ifdef __ANDROID__
+// Android drops stderr, and a crash handler must not rely on stdio: emit the
+// register dump through the platform logger so it survives into logcat.
+#define CRASH_EMIT(fmt, ...) __android_log_print(ANDROID_LOG_ERROR, "dmhost", "[dm] " fmt, ##__VA_ARGS__)
+#else
+#define CRASH_EMIT(...) fprintf(stderr, __VA_ARGS__)
+#endif
+
+void crash_dump_now(const char *why) {
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_ERROR, "dmhost", "[dm] dump (%s): tick %u / stage %s",
+                        why, atomic_load(&g_watch_tick), g_watch_stage[atomic_load(&g_watch_stage_idx)]);
+#else
+    fprintf(stderr, "[dm] 现场导出（%s）：拍 %u / 阶段 %s\n", why, atomic_load(&g_watch_tick), g_watch_stage[atomic_load(&g_watch_stage_idx)]);
+#endif
+    if (g_dump_hook) g_dump_hook(); if (g_wait_dump) g_wait_dump();
+}
 static void on_crash(int sig, siginfo_t *si, void *uc_) {
     ucontext_t *uc = uc_;
     if (sig == SIGTRAP && g_trap_hook && g_trap_hook(uc)) return;
@@ -136,11 +168,10 @@ static void on_crash(int sig, siginfo_t *si, void *uc_) {
         int is_write = (int)((DM_UC_ESR(uc) >> 6) & 1);   // ESR 的 WnR 位 | The WnR bit of ESR
         for (int i = 0; i < g_nfault_hook; i++) if (g_fault_hook[i](si->si_addr, is_write, uc)) return;
     }
-    fprintf(stderr, "[dm] CRASH sig=%d", sig);
+    CRASH_EMIT("CRASH sig=%d", sig);
     off("addr", (uint64_t)si->si_addr); off("pc", DM_UC_PC(uc)); off("lr", DM_UC_LR(uc));
-    fprintf(stderr, " sp=%#llx\n", DM_UC_SP(uc));
-    for (int i = 0; i < 29; i++) fprintf(stderr, "x%d=%#llx%s", i, DM_UC_X(uc, i), i % 6 == 5 ? "\n" : " ");
-    fprintf(stderr, "\n");
+    CRASH_EMIT("sp=%#llx", (unsigned long long)DM_UC_SP(uc));
+    for (int i = 0; i < 29; i++) CRASH_EMIT("x%d=%#llx", i, (unsigned long long)DM_UC_X(uc, i));
     dm_backtrace(DM_UC_FP(uc));
     if (g_dump_hook) g_dump_hook();
     _exit(128 + sig);

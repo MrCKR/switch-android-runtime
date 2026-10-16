@@ -6,6 +6,18 @@
 #define TLS_SIZE 8192
 #define TLR_SIZE 0x200
 #define THREAD_OBJ_SIZE 0x400
+// 客体槽控制块：8 个槽 × 0x4000（与改写器 androidize_nso.py 的 SLOT_STRIDE 一致）
+// Guest slot control block: 8 slots x 0x4000 (matches SLOT_STRIDE in tools/androidize_nso.py)
+#define DM_GUEST_SLOT_BLOCK   0x20000
+#define DM_GUEST_SLOT(n)      ((n) * 0x4000)
+#define DM_GUEST_SLOT_K18     DM_GUEST_SLOT(0)
+#define DM_GUEST_SLOT_KTLS    DM_GUEST_SLOT(1)
+#define DM_GUEST_SLOT_KTLR    DM_GUEST_SLOT(2)
+#define DM_GUEST_SLOT_KGATE   DM_GUEST_SLOT(3)
+#define DM_GUEST_SLOT_KRES0   DM_GUEST_SLOT(4)
+#define DM_GUEST_SLOT_KRES1   DM_GUEST_SLOT(5)
+#define DM_GUEST_SLOT_KASPECT DM_GUEST_SLOT(6)
+#define DM_GUEST_SLOT_KASPECTUI DM_GUEST_SLOT(7)
 extern void dm_gate(void);            // entry.S：门公共入口 | entry.S: common gate entry
 #include "front.h"
 #include "dm_uiscreen.h"
@@ -41,8 +53,43 @@ void guest_thread_init(void) {
     // the raw pointers that were allocated are recorded separately on this file's own key g_keyown and freed by its destructor (key destructors are called at pthread_exit, same as the signal alternate stack, crash.c altstack_free;
     // the destructor only calls free, which is safe on the small stack of a guest thread as well). They used not to be freed: the game starts short-lived threads frequently, and each leaked 8192 + 0x200 + 0x400 = 9728 bytes.
     // The thread-local region and the current thread object are merged into one block (the slot TLR[0x1f8] may also be overwritten by the SDK)
-    void **own = calloc(2, sizeof *own); uint8_t *tlr = calloc(1, TLR_SIZE + THREAD_OBJ_SIZE);
-    own[0] = calloc(1, TLS_SIZE); own[1] = tlr;
-    *(void **)(tlr + 0x1f8) = tlr + TLR_SIZE;               // 当前线程对象 | current thread object
-    pthread_once(&g_keyown_once, own_key_init); pthread_setspecific(g_keytls, own[0]); pthread_setspecific(g_keytlr, tlr); pthread_setspecific(g_keyown, own);
+    // 客体槽控制块：8 个槽按 0x4000 步距排列，改写后的客体代码用
+    // 「基址 + 键页偏移」直接读写；键页里存的就是槽内偏移（见 loader.c）。
+    // 槽 0/1/2 由客体自己写，槽 3 起是宿主参数，必须在这里填好。
+    void **own = calloc(2, sizeof *own);
+    uint8_t *blk = calloc(1, DM_GUEST_SLOT_BLOCK);
+    uint8_t *tls = blk + 0x2000;                     // 客体 ELF TLS 块 | guest ELF TLS block
+    uint8_t *tlr = blk + 0x1000;                     // Horizon ThreadLocalRegion
+    own[0] = blk; own[1] = tlr;
+    memset(tls, 0, TLS_SIZE);
+    memset(tlr, 0, TLR_SIZE);
+    *(void **)(tlr + 0x1f8) = blk + 0x1800;          // 当前线程对象 | current thread object
+    // The slot words are what the guest reads after "base + key-page offset".
+    // On Apple those slots were the pthread TSD cells populated by
+    // pthread_setspecific; here the block IS the TSD, so the same values have
+    // to be written straight into it -- KTLR holds the thread-local-region
+    // pointer and KTLS the guest TLS block, both of which the SDK dereferences.
+    *(uint64_t *)(blk + DM_GUEST_SLOT_KTLS) = (uint64_t)(uintptr_t)tls;
+    *(uint64_t *)(blk + DM_GUEST_SLOT_KTLR) = (uint64_t)(uintptr_t)tlr;
+    *(uint64_t *)(blk + DM_GUEST_SLOT_K18) = 0;
+    *(uint64_t *)(blk + DM_GUEST_SLOT_KGATE) = (uint64_t)(uintptr_t)dm_gate;
+    *(uint64_t *)(blk + DM_GUEST_SLOT_KRES0) = dm_game_res(0);
+    *(uint64_t *)(blk + DM_GUEST_SLOT_KRES1) = dm_game_res(1);
+    {
+        float a = 19.0f / 9.0f; int wide = 0;
+        for (int i = 0; i < 2; i++) { uint64_t r = front_game_res(i); float w = (float)(uint32_t)r, h = (float)(uint32_t)(r >> 32); if (h > 0 && w / h > a) { a = w / h; wide = 1; } }
+        float ui = wide ? a + 0.15f : a;
+        uint32_t bits;
+        memcpy(&bits, &a, 4); *(uint64_t *)(blk + DM_GUEST_SLOT_KASPECT) = bits;
+        memcpy(&bits, &ui, 4); *(uint64_t *)(blk + DM_GUEST_SLOT_KASPECTUI) = bits;
+    }
+    pthread_once(&g_keyown_once, own_key_init); pthread_setspecific(g_keytls, blk); pthread_setspecific(g_keytlr, tlr); pthread_setspecific(g_keyown, own);
 }
+
+// 客体槽基址：Android 上 tpidrro_el0 不可用（实测写会 SIGILL、读恒为 0），改写器把
+// 「mrs xN, tpidrro_el0」换成经 thunk 取本地址，其余（key 页偏移 + 载入/存出）保持上游原样。
+// Guest slot base: TPIDRRO_EL0 is unusable on Android (measured: writes SIGILL, reads are always 0),
+// so the rewriter turns "mrs xN, tpidrro_el0" into a thunk call returning this address; everything
+// else (key-page offset + load/store) stays exactly as upstream.
+void *dm_guest_tls_base(void) { return pthread_getspecific(g_keytls); }
+

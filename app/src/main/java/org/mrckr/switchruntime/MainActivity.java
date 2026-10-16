@@ -17,6 +17,15 @@ public final class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        // Diagnostic switches are read by the native layer via getenv. They are
+        // only defaults: a build with DEBUG_LOG left on produces a lot of output.
+        // Diagnostic switches are read by the native layer via getenv. overwrite=0
+        // keeps any value the harness already set (e.g. via `am start --es`).
+        try {
+            android.system.Os.setenv("DM_SVC", "1", false);
+            android.system.Os.setenv("DM_THR", "1", false);
+            android.system.Os.setenv("DM_SAMPLE", "2", false);
+        } catch (Throwable ignored) { }
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
                              WindowManager.LayoutParams.FLAG_FULLSCREEN);

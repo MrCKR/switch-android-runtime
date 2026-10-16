@@ -8,7 +8,14 @@
 #include <string.h>
 
 #define MAX_MOD 8
+#ifdef __ANDROID__
+// Android gives a process no usable stderr: anything written there is dropped.
+// Route the host log to logcat under a fixed tag so diagnostics are visible.
+#include <android/log.h>
+#define LOG(...) do { __android_log_print(ANDROID_LOG_INFO, "dmhost", "[dm] " __VA_ARGS__); } while (0)
+#else
 #define LOG(...) do { fprintf(stderr, "[dm] " __VA_ARGS__); fputc('\n', stderr); } while (0)
+#endif
 #define die(...) do { LOG("FATAL " __VA_ARGS__); abort(); } while (0)
 
 typedef struct { uint32_t st_name; uint8_t st_info, st_other; uint16_t st_shndx; uint64_t st_value, st_size; } Elf64_Sym;

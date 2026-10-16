@@ -179,10 +179,17 @@ static void install_key_page(module_t *m) {
     if (m->key_page_off + m->key_page_size > m->size) die("%s: 键页越界", m->name);
     uint64_t *page = (uint64_t *)(m->base + m->key_page_off);
     memset(page, 0, m->key_page_size);
+#if DM_TARGET_ANDROID
+    /* On Android the guest base pointer is the host-provided control block, so a
+     * key page entry must be the SLOT OFFSET inside that block, not a host key
+     * value.  dm_guest_tls_base() returns the block; the offsets are written
+     * here (0x4000 apart, mirroring the slot layout in thread.c). */
+    for (int k = 0; k < 8; k++) page[m->key_idx[k]] = (uint64_t)k * 0x4000;
+#else
     for (unsigned i = 0; i < 4; i++) page[m->key_idx[i]] = (uint64_t)key_value(i) * 8;
     page[m->key_idx[KEY_KRES0]] = (uint64_t)g_keyres[0] * 8; page[m->key_idx[KEY_KRES1]] = (uint64_t)g_keyres[1] * 8;
     page[m->key_idx[KEY_KASPECT]] = (uint64_t)g_keyaspect * 8; page[m->key_idx[KEY_KASPECTUI]] = (uint64_t)g_keyaspectui * 8;
-    for (int k = 0; k < 8; k++) if (!page[m->key_idx[k]]) die("%s: 键页第 %d 项为 0（宿主键没建）——游戏会读到 TSD 0 号槽", m->name, k);
+#endif
     if (mprotect(m->base + m->key_page_off, m->key_page_size, PROT_READ)) die("%s 键页 mprotect", m->name);
 }
 
@@ -331,24 +338,20 @@ static uint32_t android_bl(uintptr_t from, uintptr_t to) {
     if ((d & 3) || d < -(1 << 27) || d >= (1 << 27)) die("Android TLS veneer out of range");
     return 0x94000000u | ((uint32_t)(d >> 2) & 0x03ffffffu);
 }
-extern void dm_tls_tramp_get(void);
-extern void dm_tls_tramp_set(void);
-static void bind_android_tls(module_t *m, const char *dir, size_t rawsz) {
+extern void *dm_guest_tls_base(void);
+extern void dm_tls_tramp_base(void);
+
+/* The Androidized images keep upstream's slot-access sequence and only swap the
+ * "mrs tpidrro_el0" for a call through a per-module veneer whose literal is the
+ * host base getter.  Bind that literal here. */
+static void bind_android_tls(module_t *m, const char *dir) {
     char path[1024], line[256];
     snprintf(path, sizeof path, "%s/%s.fixups.tsv", dir, m->name);
     FILE *f = fopen(path, "r"); if (!f) return;
-    uintptr_t base = ((uintptr_t)m->base + rawsz + 3) & ~(uintptr_t)3;
-    uint32_t *getv = (uint32_t *)base, *setv = getv + 4;
-    getv[0] = 0x58000050u; getv[1] = 0xd61f0200u;
-    setv[0] = 0x58000050u; setv[1] = 0xd61f0200u;
-    *(uint64_t *)(getv + 2) = (uint64_t)(uintptr_t)dm_tls_tramp_get;
-    *(uint64_t *)(setv + 2) = (uint64_t)(uintptr_t)dm_tls_tramp_set;
     while (fgets(line, sizeof line, f)) {
         unsigned long off;
-        if (sscanf(line, "# ANDROID_TLS_GET %lx", &off) == 1)
-            *(uint32_t *)(m->base + off) = android_bl((uintptr_t)(m->base + off), (uintptr_t)getv);
-        else if (sscanf(line, "# ANDROID_TLS_SET %lx", &off) == 1)
-            *(uint32_t *)(m->base + off) = android_bl((uintptr_t)(m->base + off), (uintptr_t)setv);
+        if (sscanf(line, "# ANDROID_TLS_BASE_VENEER %lx", &off) == 1)
+            *(uint64_t *)(m->base + off) = (uint64_t)(uintptr_t)dm_tls_tramp_base;
     }
     fclose(f);
 }
@@ -374,7 +377,7 @@ static void map_image(module_t *m, const char *dir) {
     if (m->base == MAP_FAILED) die("%s mmap", m->name);
     memcpy(m->base, raw, sz); free(raw); install_key_page(m);
 #if DM_TARGET_ANDROID
-    bind_android_tls(m, dir, sz);
+    bind_android_tls(m, dir);
 #endif
     uint64_t rx = (m->text_end + 0x3FFF) & ~0x3FFFull;
     if (mprotect(m->base, rx, PROT_READ | PROT_EXEC)) die("%s mprotect text", m->name);

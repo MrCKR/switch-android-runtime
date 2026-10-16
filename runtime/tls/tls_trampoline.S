@@ -80,3 +80,16 @@ dm_tls_tramp_set:
     bl dm_android_tls_thunk_set
     TlsRestoreFrame
     ret
+
+    /* Slot-base trampoline for the Androidized guest images.  Those images keep
+     * upstream's whole slot sequence and replace only the "mrs tpidrro_el0", so
+     * the surrounding code still holds live values in x0..x18 across the call.
+     * The getter itself is a plain C function that clobbers x0-x18, so every
+     * caller-saved register must be preserved here (same contract as above). */
+    .globl dm_tls_tramp_base
+    .p2align 2
+dm_tls_tramp_base:
+    TlsSaveFrame
+    bl dm_guest_tls_base
+    TlsRestoreFrame
+    ret

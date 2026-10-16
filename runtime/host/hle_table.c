@@ -1,11 +1,14 @@
-// libc 直通表：与 AAPCS64 一致、无结构布局依赖的 C 库函数，直接接苹果 libc。进 swhle 段。
-// libc passthrough table: C library functions consistent with AAPCS64 and with no struct layout dependency, connected directly to Apple libc. Goes into the swhle section.
+// libc 直通表：与 AAPCS64 一致、无结构布局依赖的 C 库函数，直接接苹果 libc。进 dmsec_swhle 段。
+// libc passthrough table: C library functions consistent with AAPCS64 and with no struct layout dependency, connected directly to Apple libc. Goes into the dmsec_swhle section.
+// The section name must be dmsec_swhle: on ELF the lookup uses the linker's
+// __start_/__stop_ bounds for that name (see mach-o/elf_sections.h), so a
+// Mach-O style "__DATA,swhle" section would be emitted but never found.
 #include "dm.h"
 #include <math.h>
 #include <ctype.h>
 #include <time.h>
 typedef struct { const char *name; void *fn; } hle_ent;
-#define L(n) __attribute__((used, section("__DATA,swhle"))) static const hle_ent hle_lib_##n = { #n, (void *)n };
+#define L(n) __attribute__((used, section("dmsec_swhle"))) static const hle_ent hle_lib_##n = { #n, (void *)n };
 L(memcpy) L(memset) L(memmove) L(memcmp) L(memchr) L(strlen) L(strnlen) L(strcmp) L(strncmp)
 L(strcpy) L(strncpy) L(strcat) L(strncat) L(strchr) L(strrchr) L(strstr) L(strspn) L(strcspn)
 L(strpbrk) L(strcasecmp) L(strncasecmp) L(atoi) L(atof) L(strtol) L(strtoul) L(strtoll) L(strtoull)
