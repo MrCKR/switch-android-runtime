@@ -60,7 +60,12 @@ void guest_thread_init(void) {
     uint8_t *blk = calloc(1, DM_GUEST_SLOT_BLOCK);
     uint8_t *tls = blk + 0x2000;                     // 客体 ELF TLS 块 | guest ELF TLS block
     uint8_t *tlr = blk + 0x1000;                     // Horizon ThreadLocalRegion
-    own[0] = blk; own[1] = tlr;
+    // own[1] must be a SEPARATE allocation, not a pointer inside blk: it is
+    // owned by g_keytlr (which the guest may overwrite) and freed by its own
+    // destructor, while blk is freed by g_keyown.  Pointing own[1] inside blk
+    // made two destructors free the same address and aborted at pthread_exit.
+    uint8_t *tlr_own = calloc(1, TLR_SIZE + THREAD_OBJ_SIZE);
+    own[0] = blk; own[1] = tlr_own;
     memset(tls, 0, TLS_SIZE);
     memset(tlr, 0, TLR_SIZE);
     *(void **)(tlr + 0x1f8) = blk + 0x1800;          // 当前线程对象 | current thread object
@@ -83,7 +88,10 @@ void guest_thread_init(void) {
         memcpy(&bits, &a, 4); *(uint64_t *)(blk + DM_GUEST_SLOT_KASPECT) = bits;
         memcpy(&bits, &ui, 4); *(uint64_t *)(blk + DM_GUEST_SLOT_KASPECTUI) = bits;
     }
-    pthread_once(&g_keyown_once, own_key_init); pthread_setspecific(g_keytls, blk); pthread_setspecific(g_keytlr, tlr); pthread_setspecific(g_keyown, own);
+    pthread_once(&g_keyown_once, own_key_init);
+    pthread_setspecific(g_keytls, blk);
+    pthread_setspecific(g_keytlr, tlr);
+    pthread_setspecific(g_keyown, own);
 }
 
 // 客体槽基址：Android 上 tpidrro_el0 不可用（实测写会 SIGILL、读恒为 0），改写器把

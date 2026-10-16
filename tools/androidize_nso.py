@@ -66,7 +66,7 @@ def SUBI(reg, src, imm):
 def u32(d, o): return struct.unpack_from('<I', d, o)[0]
 def put(d, o, v): struct.pack_into('<I', d, o, v & 0xffffffff)
 
-FRAME = 32   # 16-byte aligned: x30 at +0, scratch at +8
+FRAME = 64   # 16-byte aligned; must cover the guest's own scratch use plus our saves
 
 def main():
     if len(sys.argv) != 3:
@@ -124,19 +124,31 @@ def main():
             continue
         reg = w & 31
         start = here()
-        # The trampoline preserves x1-x18 and x30 but NOT x0 (that is where it
-        # returns the base).  x0 must survive around this call for two reasons:
-        # gate blocks pass the svc arguments in x0..x2, and the lock sequences
-        # use x0 as a live operand.  So stash x0 and restore it afterwards --
-        # unless x0 IS the target register, which only happens for a real
-        # slot read.  x30 likewise must not be restored when it is the target.
+        # Live values around these sites are not limited to the target register:
+        # the SDK's heap/lock sequences keep operands in x0, x16 and x17 across
+        # the sequence.  The trampoline preserves x1-x18, but the veneer itself
+        # needs x16 (literal load) and br x16 consumes it, so the block must save
+        # and restore x0/x16/x17 as well.  x30 is not restored when it is the
+        # target register: the block leaves with B.
         emit(SUBI(31, 31, FRAME))
         emit(STR(30, 31, 0))
         emit(STR(0, 31, 8))
+        emit(STR(1, 31, 16))
+        emit(STR(16, 31, 24))
+        emit(STR(17, 31, 32))
         emit(BL(here(), veneer))
         if reg != 0:
             emit(MOV_REG(reg, 0))
             emit(LDR(0, 31, 8))
+        # Only restore a register the site does not target: x1/x16/x17 can each
+        # be the destination of the original mrs, and overwriting it would
+        # discard the base the surrounding sequence is about to dereference.
+        if reg != 1:
+            emit(LDR(1, 31, 16))
+        if reg != 16:
+            emit(LDR(16, 31, 24))
+        if reg != 17:
+            emit(LDR(17, 31, 32))
         if reg != 30:
             emit(LDR(30, 31, 0))
         emit(ADDI(31, 31, FRAME))
